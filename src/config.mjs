@@ -3,18 +3,21 @@
 // are rejected by the app): config.providerConfigRules.providerRules[],
 // models live in rule.config.modelOrder (mirrors the app's addModels).
 // Legacy schema: provider / provider.models (still supported for reading).
-// Deletion tombstones live in OUR state file (~/.zcode/model-hub/state.json),
-// never inside provider_config.json — the app's strict schema would reject
-// any extra root key and treat the whole config as corrupted.
+// Deletion tombstones live in OUR state file (state.json under the suite
+// state dir), never inside provider_config.json — the app's strict schema
+// would reject any extra root key and treat the whole config as corrupted.
 import fs from "node:fs";
 import path from "node:path";
-import { stateDir } from "./platform.mjs";
-import { atomicWriteBuffer } from "./archive/verify.mjs";
+import { stateDir, zcodeProviderConfigPath } from "./core/platform.mjs";
+import { atomicWriteBuffer } from "./core/verify.mjs";
 
-export function zcodeProviderConfigPath() {
-  return path.join(process.env.HOME || process.env.USERPROFILE || process.env.HOMEPATH || "", ".zcode", "v2", "provider_config.json");
-}
+// single source of truth lives in core/platform.mjs
+export { zcodeProviderConfigPath };
 
+// Legacy tombstone migration does NOT happen here: reading config must never
+// pull pre-suite state back in (it would resurrect deleted models after the
+// user cleared them). The one-time import lives in the install flow
+// (core/manifest.mjs importLegacyTombstones).
 function stateFilePath() {
   return path.join(stateDir(), "state.json");
 }

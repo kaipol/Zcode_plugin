@@ -1,5 +1,5 @@
 // Syntax-check every JS payload + module with the current Node binary.
-// The injected snippets must parse as a Script (main) / CJS (preload) /
+// The injected payloads must parse as a Script (main) / CJS (preload) /
 // classic script in the renderer, so plain `node --check` is the right gate.
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -7,21 +7,30 @@ import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const files = [
-  "bin/zcode-model-hub.mjs",
-  "src/platform.mjs",
+  "bin/zcode-suite.mjs",
+  "src/core/platform.mjs",
+  "src/core/features.mjs",
+  "src/core/manifest.mjs",
+  "src/core/surgical-asar.mjs",
+  "src/core/verify.mjs",
   "src/config.mjs",
   "src/deploy-skill.mjs",
   "src/providers/index.mjs",
-  "src/archive/surgical-asar.mjs",
-  "src/archive/verify.mjs",
-  "src/patch/manifest.mjs",
   "src/patch/discover-targets.mjs",
   "src/patch/apply.mjs",
   "src/repair/ensure.mjs",
   "src/repair/triggers.mjs",
-  "src/patch/snippets/main-handlers.js",
-  "src/patch/snippets/preload-bridge.cjs",
-  "src/patch/snippets/ui/zcode-model-hub.js",
+  "src/features/payloads.mjs",
+  "src/features/payloads.embedded.mjs",
+  "src/features/zcodeplus/adapt.mjs",
+  "src/features/modelhub/main-handlers.js",
+  "src/features/modelhub/preload-bridge.cjs",
+  "src/features/modelhub/ui/zcode-model-hub.js",
+  "src/features/zcodeplus/main-handlers.js",
+  "src/features/zcodeplus/preload-bridge.cjs",
+  "src/features/zcodeplus/inject.js",
+  "scripts/verify-smart-config.mjs",
+  "scripts/build.mjs",
 ];
 
 let failed = 0;

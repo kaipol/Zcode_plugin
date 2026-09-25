@@ -1,5 +1,10 @@
-# zcode-model-hub installer for Windows (PowerShell)
-# usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-ForceClose]
+# zcode-suite one-click installer for Windows (PowerShell).
+# usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-Only modelhub|zcodeplus] [-ForceClose] [-Resources <dir>]
+param(
+  [string]$Only = "",
+  [switch]$ForceClose,
+  [string]$Resources = ""
+)
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
@@ -8,6 +13,12 @@ if (-not $node) { Write-Host "[x] Node.js >= 18 required: https://nodejs.org" -F
 $major = [int]($node.Version.Split(".")[0])
 if ($major -lt 18) { Write-Host "[x] Node.js >= 18 required (current $($node.Version))" -ForegroundColor Red; exit 1 }
 
-Write-Host "[i] installing zcode-model-hub (patch + user-space skill + auto-repair trigger)"
-if ($ForceClose) { node bin/zcode-model-hub.mjs install --force-close }
-else { node bin/zcode-model-hub.mjs install }
+$args = @()
+if ($Only) { $args += @("--only", $Only) }
+if ($ForceClose) { $args += "--force-close" }
+if ($Resources) { $args += @("--resources", $Resources) }
+
+Write-Host "[i] one-click install zcode-suite (model-hub + zcode+): one backup, one repack, one repair trigger"
+node bin/zcode-suite.mjs install @args
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Write-Host "[i] done. Fully quit and restart ZCode to see both buttons."

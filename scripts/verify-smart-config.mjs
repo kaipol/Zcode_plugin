@@ -4,16 +4,16 @@
 // Three layers are exercised against a throwaway fixture config:
 //   1. src/config.mjs            — merge + migration as the CLI uses them
 //   2. the injected renderer     — mergeFinalState() sliced straight out of
-//      (src/patch/snippets/ui/zcode-model-hub.js) must produce the SAME config
+//      (src/features/modelhub/ui/zcode-model-hub.js) must produce the SAME config
 //   3. the injected main process — migrateSmartConfig() sliced out of
-//      src/patch/snippets/main-handlers.js must agree with src/config.mjs
+//      src/features/modelhub/main-handlers.js must agree with src/config.mjs
 //
 // Everything the plugin writes is then checked against the constraints the app
 // enforces on provider_config.json (strict root, required rule arrays, strict
 // manual-rule config, no provider/model declared in both rule arrays).
 //
 // No network, no real install, no writes under the real ~/.zcode: the state
-// directory is redirected to a temp dir (ZCODE_MODEL_HUB_STATE_DIR) and the
+// directory is redirected to a temp dir (ZCODE_SUITE_STATE_DIR) and the
 // config fixture lives in a temp dir too.
 //
 //   node scripts/verify-smart-config.mjs
@@ -25,7 +25,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "zmh-verify-"));
-process.env.ZCODE_MODEL_HUB_STATE_DIR = path.join(TMP, "state");
+process.env.ZCODE_SUITE_STATE_DIR = path.join(TMP, "state");
+// keep every legacy fallback path inside the tmp root too — nothing may ever
+// read the real ~/.zcode during verification
+process.env.ZCODE_MODEL_HUB_STATE_DIR = path.join(TMP, "legacy-model-hub");
+process.env.ZCODE_PLUS_ASAR_STATE_DIR = path.join(TMP, "legacy-zcode-plus");
 const CONFIG_PATH = path.join(TMP, "provider_config.json");
 
 const { mergeFetchedModels, readConfig } = await import(pathToFileURL(path.join(ROOT, "src", "config.mjs")).href);
@@ -72,20 +76,20 @@ const modelIds = (fetched) => fetched.map((f) => f.id);
 const models = (...ids) => ids.map((id) => ({ id }));
 
 function seedTombstones(map) {
-  const file = path.join(process.env.ZCODE_MODEL_HUB_STATE_DIR, "state.json");
+  const file = path.join(process.env.ZCODE_SUITE_STATE_DIR, "state.json");
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ deletedModels: map }, null, 2), "utf8");
 }
 
 function readTombstones() {
-  const file = path.join(process.env.ZCODE_MODEL_HUB_STATE_DIR, "state.json");
+  const file = path.join(process.env.ZCODE_SUITE_STATE_DIR, "state.json");
   if (!fs.existsSync(file)) return {};
   const st = JSON.parse(fs.readFileSync(file, "utf8"));
   return st.deletedModels && typeof st.deletedModels === "object" ? st.deletedModels : {};
 }
 
 function clearTombstones() {
-  fs.rmSync(path.join(process.env.ZCODE_MODEL_HUB_STATE_DIR, "state.json"), { force: true });
+  fs.rmSync(path.join(process.env.ZCODE_SUITE_STATE_DIR, "state.json"), { force: true });
 }
 
 // The default shape pre-1.5 plugin versions wrote for every model they added.
@@ -266,7 +270,7 @@ function extractFunctions(src, names) {
   return parts.join("\n");
 }
 
-const uiSrc = fs.readFileSync(path.join(ROOT, "src", "patch", "snippets", "ui", "zcode-model-hub.js"), "utf8");
+const uiSrc = fs.readFileSync(path.join(ROOT, "src", "features", "modelhub", "ui", "zcode-model-hub.js"), "utf8");
 const uiMerge = new Function(
   extractFunctions(uiSrc, [
     "mergeFinalState",
@@ -281,7 +285,7 @@ const uiMerge = new Function(
   ]) + "\nreturn { mergeFinalState: mergeFinalState };",
 )();
 
-const mainSrc = fs.readFileSync(path.join(ROOT, "src", "patch", "snippets", "main-handlers.js"), "utf8");
+const mainSrc = fs.readFileSync(path.join(ROOT, "src", "features", "modelhub", "main-handlers.js"), "utf8");
 const mainMigrate = new Function(
   extractFunctions(mainSrc, ["modelRulesOf", "onlyKeys", "looksPluginGenerated", "migrateSmartConfig"]) +
     "\nreturn { migrateSmartConfig: migrateSmartConfig };",
@@ -461,7 +465,7 @@ check("migration converts plugin-generated manual rules and keeps tuned ones", (
   assert.equal(fs.readFileSync(CONFIG_PATH, "utf8"), before, "a second read must not rewrite anything");
 });
 
-console.log("renderer payload (src/patch/snippets/ui/zcode-model-hub.js)");
+console.log("renderer payload (src/features/modelhub/ui/zcode-model-hub.js)");
 
 // The renderer must reach byte-identical configs for the same user actions.
 function parity(name, steps) {
@@ -487,7 +491,7 @@ function parity(name, steps) {
 
 parity("renderer: add, delete personal, delete template built-in, re-check", CYCLE);
 
-console.log("main-process payload (src/patch/snippets/main-handlers.js)");
+console.log("main-process payload (src/features/modelhub/main-handlers.js)");
 
 // The injected main process migrates on read too; it must agree with config.mjs.
 check("main-process migration matches src/config.mjs", () => {

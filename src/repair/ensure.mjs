@@ -1,7 +1,8 @@
-// `ensure` — the auto-repair state machine. Designed as a one-shot process:
-// fast path is a single stat() (microseconds); hashing happens only when
-// stats drift; patching only when ZCode actually updated AND is not running.
-// All dependencies are injectable for tests.
+// `ensure` — the auto-repair state machine, unified for both features.
+// Designed as a one-shot process: fast path is a single stat()
+// (microseconds); hashing happens only when stats drift; patching only when
+// ZCode actually updated AND is not running. All dependencies are injectable
+// for tests.
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -10,9 +11,10 @@ import {
   writePending,
   readPending,
   clearPending,
-} from "../patch/manifest.mjs";
-import { sha256File } from "../archive/verify.mjs";
-import { discoverTargets, isAlreadyPatched } from "../patch/discover-targets.mjs";
+} from "../core/manifest.mjs";
+import { sha256File } from "../core/verify.mjs";
+import { FEATURE_ORDER } from "../core/features.mjs";
+import { discoverTargets, sentinelsPresent } from "../patch/discover-targets.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -92,10 +94,10 @@ export async function runEnsure(ctx) {
 
   // Classify the new archive: already ours? layout intact?
   let targets = null;
-  let ours = false;
+  let present = null;
   try {
     targets = discoverTargets(asarPath);
-    ours = isAlreadyPatched(asarPath, targets);
+    present = sentinelsPresent(asarPath, targets);
   } catch (e) {
     result.action = "incompatible";
     result.error = e.message;
@@ -103,9 +105,14 @@ export async function runEnsure(ctx) {
     return result;
   }
 
-  if (ours) {
-    // our own patch (e.g. manifest cache was stale) — just re-record state
-    const updated = { ...(m || { tool: "zcode-model-hub" }), patchedHash: h2, patchedStat: statSnapshot(fs.statSync(asarPath)), targets };
+  if (FEATURE_ORDER.some((id) => present[id])) {
+    // our own payloads (e.g. manifest cache was stale) — re-record state
+    const updated = {
+      ...(m || { tool: "zcode-suite" }),
+      patchedHash: h2,
+      patchedStat: statSnapshot(fs.statSync(asarPath)),
+      targets,
+    };
     saveManifest(updated);
     result.action = "ok";
     clearPending();
@@ -117,16 +124,21 @@ export async function runEnsure(ctx) {
     return result;
   }
 
-  // Real update of an unpatched archive -> adaptive reinstall.
+  // Real update of an unpatched archive -> adaptive reinstall of the SAME
+  // feature set the manifest recorded (default: the full suite).
   // IMPORTANT: pin install() to the exact resources dir we just inspected —
   // without this, auto mode could re-discover (and patch) a different
   // installation on the machine.
+  const recorded = m && m.features && Object.keys(m.features).length ? Object.keys(m.features) : null;
   try {
     const { install } = await import("../patch/apply.mjs");
     const res = await install({
       auto: true,
       _isRunning: isRunning,
       resourcesOverride: path.dirname(asarPath),
+      // a single recorded feature reinstalls just that one; anything else
+      // (both, or no manifest) repairs to the full suite
+      only: recorded && recorded.length === 1 ? recorded[0] : null,
     });
     result.action = res.ok ? "repatched" : "failed";
     result.detail = res;

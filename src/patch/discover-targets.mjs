@@ -1,7 +1,10 @@
 // Locate the files we patch inside app.asar by path shape, not by exact
 // hardcoded paths. Node/minified-code anchors change per build; the out/
 // layout survives far longer. Ambiguity = hard error.
-import { listFiles, readEntryText } from "../archive/surgical-asar.mjs";
+// Each feature gets its OWN renderer script name — never share or reuse one,
+// a suite repack would otherwise overwrite the other feature's UI payload.
+import { listFiles, readEntryText } from "../core/surgical-asar.mjs";
+import { FEATURES, FEATURE_ORDER } from "../core/features.mjs";
 
 const EXCLUDE = /(^|\/)(node_modules|\.cache|test|tests|__tests__)(\/|$)/;
 
@@ -39,21 +42,27 @@ export function discoverTargets(archive) {
     /^index\.html$/,
   ]);
 
-  return {
-    main,
-    preload,
-    rendererHtml,
-    uiScript: rendererHtml.replace(/index\.html$/, "zcode-model-hub.js"),
-  };
+  const rendererScripts = {};
+  for (const id of FEATURE_ORDER) {
+    rendererScripts[id] = rendererHtml.replace(/index\.html$/, FEATURES[id].rendererScript);
+  }
+  if (new Set(Object.values(rendererScripts)).size !== FEATURE_ORDER.length)
+    throw new Error("internal error: renderer script names collide between features");
+
+  return { main, preload, rendererHtml, rendererScripts };
 }
 
-// True when our sentinel already lives in the main or preload entry.
-export function isAlreadyPatched(archive, targets) {
-  for (const rel of [targets.main, targets.preload, targets.rendererHtml]) {
-    const txt = readEntryText(archive, rel);
-    if (txt && txt.includes("__ZCODE_MODEL_HUB_V1__")) return true;
+// Per-feature sentinel presence in main / preload / renderer html.
+export function sentinelsPresent(archive, targets) {
+  const texts = [targets.main, targets.preload, targets.rendererHtml].map((rel) =>
+    readEntryText(archive, rel),
+  );
+  const out = {};
+  for (const id of FEATURE_ORDER) {
+    const s = FEATURES[id].sentinel;
+    out[id] = texts.some((t) => !!t && t.includes(s));
   }
-  return false;
+  return out;
 }
 
 // Detects markers left by the two upstream patches so we can refuse to stack.

@@ -1,120 +1,202 @@
-# zcode-model-hub+ Zcode+提示词增强
+# zcode-suite — ZCode 桌面版统一插件
 
-[![CI](https://github.com/roiding/zcode-model-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/roiding/zcode-model-hub/actions/workflows/ci.yml)
+**model-hub（模型拉取）+ zcode+（提示词增强）整合为一个插件：一键安装、一次备份、一个自愈触发器。**
 
-**为 ZCode 桌面版一键拉取自定义供应商模型列表 —— 全平台、更新自适应、零常驻资源。**
-
-融合并改进了两个上游项目的优点（见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)）：
-[HHQ-666/zcode-model-puller](https://github.com/HHQ-666/zcode-model-puller) 的
-MutationObserver 自适应 UI 与 [CSSZYF/zcode-modelhub-patch](https://github.com/CSSZYF/zcode-modelhub-patch)
-的手术式 asar 改写、严格锚点校验与多 API 方言支持。
-
-## 为什么是这个项目
-
-| 痛点 | zcode-model-puller | zcode-modelhub-patch | **本项目** |
-|---|---|---|---|
-| ZCode 更新后补丁失效 | 要重跑脚本 | 要重跑脚本 | **触发器自动重装，无感恢复** |
-| 平台 | 实际仅 macOS | 仅 Windows | **macOS / Windows / Linux** |
-| 依赖 | 需要 npx @electron/asar | 零依赖 | **零依赖（纯 Node 标准库）** |
-| 版本耦合 | 部分锚点静默跳过 | 锚点写死构建 hash | **无锚点追加 + 格式级锚点 + 语义定位** |
-| API 方言 | 仅 OpenAI 兼容 | OpenAI / Anthropic / Gemini | **OpenAI / Anthropic / Gemini** |
-| 更新后诊断 | 无 | 明确报错 | **doctor 兼容性报告 + CLI 层永远可用** |
-
-## 三层架构
+把 `zcode-model-hub`（为 ZCode 桌面版拉取自定义供应商模型列表）与
+`zcode+ 提示词增强`（输入框旁 ✨ 一键改写提示词）整合成单个脚本插件。
+两套功能共享同一套手术式 asar 引擎、同一条官方备份链、同一个更新自愈
+触发器；注入互不干扰的 `modelhub:*` / `zcodeplus:*` 命名空间。
 
 ```
-层1 CLI/技能（100% 更新免疫）
-  ~/.zcode/v2/provider_config.json 原子读写 + 三方言拉取
-  （兼容旧版 config.json；schemaVersion 1 严格校验，墓碑存工具自己的 state.json）
-  部署为 ZCode 技能/命令：对话里说"拉取 xxx 的模型列表"即可
-      ↓ 不够用时
-层2 自适应注入（按钮随 ZCode 更新自动回来）
-  main/preload: 无锚点追加（EOF 追加 ipcMain.handle / contextBridge）
-  renderer: 只挂 index.html 的 </body>（格式级锚点）+ MutationObserver 语义定位
-  手术式重打包：数据区逐字节保留、app.asar.unpacked 不动、原子替换 + 读回校验
-      ↓ 更新被删后
-层3 自动重装（零常驻进程）
-  macOS  : LaunchAgent（RunAtLoad + WatchPaths，内核事件驱动）
-  Windows: 计划任务（登录时 + 每 6 小时，一次性运行毫秒级结束）
-  Linux  : systemd user .path unit（PathChanged，inotify）
-  ensure 快路径 = 一次 stat()；只有真发生更新才付出 哈希 0.3s + 重打包 1~5s
+一键安装 = 注入「⚡️ 拉取模型」+ ✨ 提示词增强（同一份 app.asar，一次原子替换）
+         + 部署用户空间技能（更新免疫的 CLI 层）
+         + 注册自动修复触发器（ZCode 更新后自动重装）
 ```
 
-任何一层失败都不影响其他层：最坏情况 = UI 按钮暂时消失，CLI/技能照常拉模型。
+## 目录结构
+
+```
+zcode-suite/
+├── package.json                  # 包定义（zcode-suite，bin 入口）
+├── README.md                     # 本文件
+├── bin/
+│   └── zcode-suite.mjs           # 统一 CLI：install/restore/remove/status/
+│                                 #   doctor/ensure/sync/watch/unwatch
+├── src/
+│   ├── core/                     # ★ 两特性共享的底层（去重核心）
+│   │   ├── platform.mjs          #   ZCode 发现/进程检测/路径（唯一来源）
+│   │   ├── surgical-asar.mjs     #   手术式 asar 读写（数据区逐字节保留）
+│   │   ├── verify.mjs            #   哈希/原子写/重包校验
+│   │   ├── manifest.mjs          #   统一 manifest + 单一备份链 + 旧版迁移
+│   │   └── features.mjs          #   特性注册表（哨兵/载荷/命名空间清单）
+│   ├── features/                 # ★ 两特性的注入载荷（互不重叠的命名空间）
+│   │   ├── payloads.mjs          #   载荷解析（源码树 / 内嵌双通道）
+│   │   ├── payloads.embedded.mjs #   内嵌桩（单文件构建预留，保持为空）
+│   │   ├── modelhub/             #   main-handlers.js + preload-bridge.cjs
+│   │   │   └── ui/zcode-model-hub.js
+│   │   └── zcodeplus/            #   main-handlers.js + preload-bridge.cjs
+│   │       ├── inject.js         #     CDP 版注入源（安装时适配为 asar 载荷）
+│   │       └── adapt.mjs         #     锚点适配器（锚点不匹配即硬失败）
+│   ├── patch/
+│   │   ├── discover-targets.mjs  #   asar 内目标发现（按路径形态，歧义即失败）
+│   │   └── apply.mjs             #   统一 install/restore/remove/inspect
+│   ├── repair/
+│   │   ├── ensure.mjs            #   自愈状态机（一次 ensure 恢复两特性）
+│   │   └── triggers.mjs          #   macOS LaunchAgent / Win 计划任务 /
+│   │                             #   Linux systemd path（+ 旧触发器清理）
+│   ├── config.mjs                #   provider_config.json 读写与合并（层1）
+│   ├── providers/index.mjs       #   OpenAI/Anthropic/Gemini 三方言拉取（层1）
+│   ├── deploy-skill.mjs          #   部署技能/命令到 ~/.zcode/
+│   └── templates/                #   技能与命令模板（旧仓库缺失，本次补齐）
+├── scripts/
+│   ├── install.sh / install.ps1  # 一键安装包装（Node 环境自检）
+│   ├── uninstall.sh / uninstall.ps1
+│   ├── check-syntax.mjs          # 全模块 + 载荷语法门禁
+│   ├── verify-smart-config.mjs   # 智能配置三层一致性验证
+│   └── build.mjs                 # 构建单文件 dist/zcode-suite.mjs
+├── test/                         # 夹具测试（合成 asar，不碰真实安装）
+└── dist/
+    └── zcode-suite.mjs           # 构建产物：单文件自解压安装器
+```
 
 ## 安装
 
-```bash
-git clone <this-repo> && cd zcode-model-hub
-./scripts/install.sh          # macOS / Linux
-powershell -File scripts/install.ps1   # Windows
-```
+前置条件：ZCode 桌面版；Node.js ≥ 18（零第三方依赖）。
 
-等价的裸命令：`node bin/zcode-model-hub.mjs install`。
-
-安装做三件事：注入 UI 补丁（自动备份原版）→ 部署 skill/command 到 `~/.zcode/` → 注册自动修复触发器。
-完成后**完全退出并重启 ZCode**，设置 → 模型供应商 → 添加/编辑渠道页会出现「⚡️ 拉取模型」按钮。
-
-不想注入任何东西？只要层1：
+方式一（源码目录）：
 
 ```bash
-node bin/zcode-model-hub.mjs sync --list     # 列出已配置供应商
-node bin/zcode-model-hub.mjs sync --provider deepseek
-node bin/zcode-model-hub.mjs sync --all
+./scripts/install.sh                        # macOS / Linux
+powershell -File scripts\install.ps1        # Windows
+# 等价：node bin/zcode-suite.mjs install
 ```
 
-## 命令
+方式二（单文件产物，构建后拷走即可用）：
+
+```bash
+node dist/zcode-suite.mjs install
+```
+
+单文件运行时把内嵌文件树解压到 `~/.zcode/zcode-suite/app`（可用
+`ZCODE_SUITE_APP_DIR` 改址），之后以原参数调用统一 CLI——产物即一个
+可直接安装的脚本插件。
+
+安装过程会：一次解析基线并备份官方 app.asar（仅此一份）→ 一次手术式
+重打包写入两特性 → 部署技能/命令 → 注册自愈触发器。**完成后完全退出并
+重启 ZCode**：设置 → 模型供应商页出现「⚡️ 拉取模型」，输入框旁出现 ✨。
+
+可选：
+
+```bash
+node bin/zcode-suite.mjs install --only zcodeplus   # 只装一个特性（保留已在位的另一个）
+node bin/zcode-suite.mjs remove --only modelhub     # 卸载单个特性，保留另一个
+node bin/zcode-suite.mjs restore                    # 还原官方原版（两特性一并移除）
+node bin/zcode-suite.mjs sync --list                # 纯 CLI 拉模型（不碰 app.asar）
+node bin/zcode-suite.mjs status / doctor            # 状态与体检
+```
+
+## 整合解决的三类问题
+
+### 1) 资源去重与共享
+
+| 旧做法（两个独立插件） | 统一后 |
+|---|---|
+| 两份 asar 手术引擎/校验/原子写（zcode+ 直接 import 对方的） | `src/core/` 一份 |
+| 两份 ZCode 发现/进程检测，`zcodeProviderConfigPath` 定义两次 | `src/core/platform.mjs` 唯一来源 |
+| 两份 manifest + 两份 `backups/<hash>/app.asar` 冷备份 | 一条备份链；`ensureBackup` 按哈希去重，**整个安装过程仅备份一次** |
+| 两次 asar 重打包、两次原子替换、两次读回校验 | 同一 patchMap 一次重打包、一次替换、一次校验 |
+| 两个 sentinel 探测/异补丁检测实现 | `features.mjs` 注册表 + `discover-targets` 按特性探测 |
+| 触发器只护 model-hub，zcode+ 更新后要手动重跑 | 一个触发器 `ensure` 同时恢复两特性 |
+| `templates/` 缺失导致默认 install 崩溃（存量缺陷） | 模板补齐于 `src/templates/` |
+
+### 2) 兼容性处理（冲突与命名空间）
+
+两特性载荷本就互不重叠，整合时逐项审计并固定为注册表约束：
+
+| 层 | model-hub | zcode+ | 冲突 |
+|---|---|---|---|
+| main 守卫 / IPC | `__ZCODE_MODEL_HUB_V1_MAIN__`，`modelhub:*`（7 通道） | `__ZCODE_PLUS_V1_MAIN__`，`zcodeplus:request` | 无 |
+| preload 暴露 | `window.zcodeModelHub` | `window.zcodePlus` | 无 |
+| 渲染层脚本 | `zcode-model-hub.js` | `zcode-plus.js`（独立 asar 条目） | 无 |
+| UI 状态 | `window.__ZCODE_MODEL_HUB_V1_UI__` | `__zcodePlusEnhanceRuntime` + `wb-enhance-*` DOM 前缀 | 无 |
+| localStorage | 无键 | `zcodePlusEnhance.settings.v1` | 无 |
+| 状态目录 | `~/.zcode/model-hub/` | `~/.zcode/zcode-plus/` | **统一为 `~/.zcode/zcode-suite/`** |
+| 文件同名 | `main-handlers.js` / `preload-bridge.cjs` 同名同语义不同物 | 同左 | **分目录 `src/features/<id>/`** |
+| 临时文件名 | `*.model-hub-tmp` / `app.asar.model-hub-new` | `*.zcode-plus-tmp` | 统一 `*.zcode-suite-tmp` / `app.asar.zcode-suite-new` |
+
+修复的交叉干扰：旧方案里「model-hub restore 会还原到 zcode+-已注入态、
+zcode+ restore 会抹掉 model-hub」——现在 restore 语义唯一（回到基线，
+通常即官方原版），单特性卸载用 `remove --only`；两个旧状态目录、旧触发器
+（`ZCodeModelHubRepair` / `com.zcode-model-hub.repair` /
+`zcode-model-hub-repair.*`）在迁移与注册时自动清理或接管。
+
+### 3) 从旧插件升级（自动迁移）
+
+直接对已装旧插件的机器执行一次 `install` 即可：
+
+| 旧状态 | 统一安装的行为 |
+|---|---|
+| 装过 model-hub（有 manifest + 备份） | 取两方中 **installedAt 更早** 的备份作为基线（那才是真官方版），并入统一备份链；两个特性一次重装 |
+| 装过 zcode+（同上） | 同上 |
+| 两个都装过 | 早者为准，备份去重后仍只有一份 |
+| 哨兵在位但 manifest 丢失 | 采用当前 asar 为基线（`baseline.clean=false`），只补缺失特性，绝不重复追加；此时 `restore` 回到的是该基线（其中的旧注入保留），`remove --only` 会被拒绝并提示先取得干净原版 |
+| 旧墓碑状态 `~/.zcode/model-hub/state.json` | install 时并入 `~/.zcode/zcode-suite/state.json`；**只在安装流程迁移**——读配置永不回读旧目录，避免已删模型复活 |
+| 旧触发器 | 注册统一触发器时删除 |
+
+旧目录迁移后保留原样（不删除），确认无虞后可手动清理
+`~/.zcode/model-hub/` 与 `~/.zcode/zcode-plus/`。
+
+## 构建
+
+```bash
+node scripts/build.mjs        # 产出 dist/zcode-suite.mjs（单文件自解压安装器）
+node scripts/check-syntax.mjs # 全模块 + 载荷语法门禁
+node --test test/             # 12 个夹具测试：统一安装/迁移/去重备份/
+                              # remove/adopted 基线/ensure 自愈/inject 适配
+node scripts/verify-smart-config.mjs   # 智能配置 CLI/渲染层/主进程三层一致性
+```
+
+build.mjs 自带三重门禁：产物语法检查、`--version` 冒烟、临时目录解压 +
+CLI 链路冒烟；产物哈希打印在构建输出末尾。
+
+## 命令速查
 
 | 命令 | 作用 |
 |---|---|
-| `install` | 注入 + 部署技能 + 注册触发器（`--no-watch` / `--no-skill` 可选） |
-| `restore` | 还原官方原版 app.asar（按 manifest 里的原始哈希精确恢复） |
-| `status` | 三层状态一览 |
-| `doctor` | 只读深度体检；异常时生成 `~/.zcode/model-hub/doctor-report.json`（可携带提 issue） |
-| `ensure` | 一次性自愈检查（触发器内部调用；`--check-only` 只诊断） |
-| `sync` | 用户空间模型同步（`--list` / `--provider <id>` / `--all` / `--dialect`） |
-| `watch` / `unwatch` | 仅注册/卸载自动修复触发器 |
+| `install [--only id] [--no-watch] [--no-skill] [--force-close] [--resources dir]` | 一键安装（默认两特性 + 技能 + 触发器） |
+| `restore [--force]` | 还原基线（通常即官方原版） |
+| `remove --only <modelhub\|zcodeplus>` | 卸载单特性，保留另一个 |
+| `status [--json]` | 三层状态（CLI 层 / 两特性注入态 / 触发器） |
+| `doctor` | 只读体检，异常时生成 `doctor-report.json` |
+| `ensure [--quiet] [--check-only]` | 一次性自愈（触发器内部调用，快路径一次 stat） |
+| `sync --list / --provider <id> / --all / --dialect` | 用户空间模型同步（更新免疫） |
+| `watch` / `unwatch` | 注册/卸载自愈触发器 |
 
-选项：`--resources <dir>` 显式指定安装路径；`--force-close` 写入前强制关闭 ZCode（默认拒绝在运行时写入）。
+## 安全模型（继承并统一）
 
-## 安全模型
-
-- **写入前**：ZCode 运行中一律拒绝（自动模式一律延迟，绝不自动杀进程）；检测到其他补丁（上游两项目的标记）拒绝叠加；macOS 检测 `ElectronAsarIntegrity`（fuse 启用时注入层不可用，明确报告而不是写坏应用）。
-- **写入时**：同目录临时文件 + fsync + 尺寸校验 + 条目哈希读回校验 + 原子改名；手术式重打包保留原数据区与 `app.asar.unpacked`。
-- **备份**：按官方构建哈希分目录冷备份，保留最近 2 个版本；`restore` 拒绝把未知状态错还原成旧版本（`--force` 覆盖）。
-- **更新竞态**：双次哈希 debounce 识别"更新进行中"；正在运行 → 记录 pending，下次触发/启动前补齐。
-- **隐私**：API key 只进用户自己的配置，不写日志、不进 manifest、错误信息自动脱敏（`key=***`）。
-- **防呆**：`ensure` 的自动重装被强制锁定到它检查过的那个 resources 目录（回归测试覆盖）。
-
-## 使用（注入后）
-
-1. 添加/编辑渠道，填好 BaseURL（带不带 `/v1` 都行）和 API Key，选好 API 格式
-2. 点「⚡️ 拉取模型」→ 弹窗两个子页签：默认「未保存」（全不选，勾选即准备添加）；「已保存」页可查看已保存模型（默认全勾选=保留），取消勾选并保存即删除该模型
-3. 可选「探测视觉(勾选)」：发 1×1 测试图实测识图能力，不靠模型名猜
-4. 「确认保存」→ 新增勾选的未保存模型只写两处：`personalModelIds`（加入模型全集）+ `modelOrder`（排序可见）。**不写 `manual-provider-model` 规则**——没有手动规则，ZCode 就用该渠道的模型智能配置：内置 `modelRules` 的兜底规则给出 `enabled: true`，再由模型/API/站点/模板规则叠加推荐的能力与参数（上下文、工具调用、推理档位等），用户后续在界面里仍可随时改成手动配置。删除取消勾选的已保存模型：个人模型整条移除（`personalModelIds` + `modelOrder`，若有手动规则一并删掉）；模板自带模型通过 `enabled:false` 的 provider-model 规则隐藏（模板模型全集固定，删不掉，只能禁用；用的就是 ZCode 自己开关模型时写的规则形状，智能配置不变）。未勾选的未保存模型只记墓碑（存 `~/.zcode/model-hub/state.json`），不会被下次自动同步强制加入。老版本插件写下的默认手动配置规则，会在下次读取配置时一次性迁移：`enabled:false` 转成等价的隐藏规则，其余直接删除让模型回到智能配置；你手动调过的规则（推理档位、自定义上下文等）原样保留。按钮只注入模型供应商页面，不再出现在插件等其他设置页
-
-## 开发
-
-```bash
-node scripts/check-syntax.mjs   # 全模块 + 注入载荷语法检查
-node scripts/verify-smart-config.mjs
-                                # 智能配置流水线验证：拉取/删除/重新勾选/墓碑/
-                                # 一次性迁移，逐场景比对 CLI、渲染层、主进程三层
-                                # 结果一致，并校验写出的 provider_config.json 仍能
-                                # 通过 ZCode 的严格校验（临时目录，不碰真实配置）
-node --test                     # 28 个测试：asar 手术/校验、动态目标发现、
-                                # 三方言解析、配置合并/墓碑、ensure 状态机、
-                                # 以及"模拟 ZCode 更新 → ensure 自动重装"端到端
-```
-
-测试中的集成流程使用合成 asar 夹具（`test/helpers.mjs`），不触碰真实安装。
+- ZCode 运行中一律拒绝写入（`--force-close` 才写，自动模式一律延迟）；
+- 上游两项目的异构补丁标记在位时拒绝叠加；
+- macOS 检测 `ElectronAsarIntegrity`，启用时明确拒绝注入（CLI 层不受影响）；
+- 手术式重打包：原数据区逐字节保留、`app.asar.unpacked` 不动、临时文件 +
+  fsync + 尺寸/哈希读回校验 + 原子改名，任何一步失败原文件分毫未动；
+- 备份按哈希冷存、只增不覆盖、保留最近 2 个版本；
+- API key 只进用户自己的配置，不写日志、不进 manifest、错误自动脱敏；
+- AppImage 只读镜像不支持注入（CLI 层可用）。
 
 ## 已知限制
 
-- 注入层无法作用于 AppImage（只读镜像）；Linux AppImage 用户请用 CLI/skill 层。
-- ZCode 若未来启用 asar 完整性 fuse，注入层整体失效（doctor 会明确报告），CLI 层不受影响。
-- 自动重装要求触发器平台（launchd / Task Scheduler / systemd user）；不满足时 `ensure` 可手动或由启动器 shim 调用。
+- zcode+ 旧版「CDP 常驻控制器 + 调试端口」模式未纳入本项目：asar 注入版是其
+  官方推荐替代（无常驻进程、无调试端口）；本仓库只包含 zcode-suite，
+  旧独立控制器不在版本库中（历史上游快照可查）。
+- ZCode 若未来启用 asar 完整性 fuse 或大幅调整 out/ 布局，注入层失效
+  （doctor 会明确报告），CLI/技能层不受影响。
+- `install --only` 单特性安装后，`ensure` 只恢复该特性（以 manifest 记录
+  为准）；未装过的特性不会被自动补装。
 
 ## License
 
-MIT。上游思路致谢见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+MIT。上游致谢：model-hub 融合
+[HHQ-666/zcode-model-puller](https://github.com/HHQ-666/zcode-model-puller) 与
+[CSSZYF/zcode-modelhub-patch](https://github.com/CSSZYF/zcode-modelhub-patch)；
+zcode+ 提示词增强为 WorkBuddy 功能的社区移植，页面图标改编自
+[Lucide](https://lucide.dev)（ISC）。

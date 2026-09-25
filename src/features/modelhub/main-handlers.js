@@ -21,7 +21,7 @@
     // root). Older builds used config.json — kept as a read/write fallback.
     const V2_DIR = path.join(os.homedir(), ".zcode", "v2");
     const CONFIG_CANDIDATES = [path.join(V2_DIR, "provider_config.json"), path.join(V2_DIR, "config.json")];
-    const STATE_PATH = path.join(os.homedir(), ".zcode", "model-hub", "state.json");
+    const STATE_PATH = path.join(os.homedir(), ".zcode", "zcode-suite", "state.json");
     const PNG_1PX =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
     const VISION_RE =

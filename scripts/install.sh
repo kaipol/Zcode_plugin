@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# zcode-model-hub one-shot installer (macOS / Linux)
+# zcode-suite one-click installer (macOS / Linux): model-hub + zcode+ in one
+# pass — one backup, one repack, one auto-repair trigger.
+# usage: ./scripts/install.sh [--only modelhub|zcodeplus] [--no-watch]
+#        [--no-skill] [--force-close] [--resources <dir>]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -13,5 +16,5 @@ if [ "$NODE_MAJOR" -lt 18 ]; then
   exit 1
 fi
 
-echo "[i] 安装 zcode-model-hub（注入 + 用户空间技能 + 自动修复触发器）"
-exec node bin/zcode-model-hub.mjs install "$@"
+echo "[i] 一键安装 zcode-suite（model-hub + zcode+：一次备份、一次注入、一个自愈触发器）"
+exec node bin/zcode-suite.mjs install "$@"

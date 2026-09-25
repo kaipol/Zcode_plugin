@@ -12,8 +12,11 @@ export function home() {
 }
 
 export function stateDir() {
+  if (process.env.ZCODE_SUITE_STATE_DIR) return process.env.ZCODE_SUITE_STATE_DIR;
+  // legacy alias: honors the pre-suite env override so old tooling and
+  // verification harnesses keep working against the same layout
   if (process.env.ZCODE_MODEL_HUB_STATE_DIR) return process.env.ZCODE_MODEL_HUB_STATE_DIR;
-  return path.join(home(), ".zcode", "model-hub");
+  return path.join(home(), ".zcode", "zcode-suite");
 }
 
 export function zcodeProviderConfigPath() {

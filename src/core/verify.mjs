@@ -29,7 +29,7 @@ export function sha256File(file) {
 // Write buffer to dest atomically. expectSize (if given) is verified on the
 // temp file before rename.
 export function atomicWriteBuffer(dest, buf, { expectSize } = {}) {
-  const tmp = dest + ".model-hub-tmp";
+  const tmp = dest + ".zcode-suite-tmp";
   fs.rmSync(tmp, { force: true });
   const fd = fs.openSync(tmp, "w");
   fs.writeSync(fd, buf);
@@ -43,7 +43,7 @@ export function atomicWriteBuffer(dest, buf, { expectSize } = {}) {
 
 // Copy src -> dest atomically (used for backups/restores).
 export function atomicCopyFile(src, dest, { expectSize } = {}) {
-  const tmp = dest + ".model-hub-tmp";
+  const tmp = dest + ".zcode-suite-tmp";
   fs.rmSync(tmp, { force: true });
   fs.copyFileSync(src, tmp);
   const got = fs.statSync(tmp).size;

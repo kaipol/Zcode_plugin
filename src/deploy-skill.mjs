@@ -1,25 +1,27 @@
 // Deploy the user-space skill + command (layer 1: survives ZCode updates).
+// The templates ship under src/templates/ — they were missing from the
+// pre-suite repo, which crashed the default install at this step.
 import fs from "node:fs";
 import path from "node:path";
-import { atomicWriteBuffer } from "../archive/verify.mjs";
-import { home } from "../platform.mjs";
+import { atomicWriteBuffer } from "./core/verify.mjs";
+import { home } from "./core/platform.mjs";
 
 export function deploySkill() {
-  const cliPath = fs.realpathSync(new URL("../../bin/zcode-model-hub.mjs", import.meta.url));
+  const cliPath = fs.realpathSync(new URL("../bin/zcode-suite.mjs", import.meta.url));
   const results = [];
   const jobs = [
     {
-      template: "../../templates/skill-model-hub-SKILL.md",
+      template: "skill-model-hub-SKILL.md",
       dest: path.join(home(), ".zcode", "skills", "model-hub", "SKILL.md"),
     },
     {
-      template: "../../templates/command-pull-models.md",
+      template: "command-pull-models.md",
       dest: path.join(home(), ".zcode", "commands", "pull-models.md"),
     },
   ];
   for (const job of jobs) {
-    let txt = fs.readFileSync(new URL(job.template, import.meta.url), "utf8");
-    txt = txt.split("{{CLI_PATH}}").join(cliPath);
+    let txt = fs.readFileSync(new URL(`./templates/${job.template}`, import.meta.url), "utf8");
+    txt = txt.split("{{CLI_PATH}}").join(JSON.stringify(cliPath));
     fs.mkdirSync(path.dirname(job.dest), { recursive: true });
     atomicWriteBuffer(job.dest, Buffer.from(txt, "utf8"));
     results.push(job.dest);

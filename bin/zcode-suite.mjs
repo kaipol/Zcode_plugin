@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// zcode-model-hub — cross-platform, update-resilient model pulling for ZCode.
-// Zero npm dependencies. Node >= 18 required (global fetch).
+// zcode-suite — unified ZCode desktop plugin: model-hub (model pulling) +
+// zcode+ (prompt enhancement) in one install, one backup chain, one repair
+// trigger. Zero npm dependencies. Node >= 18 required (global fetch).
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { OS as platform, zcodeProviderConfigPath } from "../src/platform.mjs";
+import { OS as platform, zcodeProviderConfigPath, findZcodeInstall } from "../src/core/platform.mjs";
+import { FEATURES, FEATURE_ORDER } from "../src/core/features.mjs";
 
-const VERSION = "0.1.0";
+const VERSION = "1.0.0";
 
 function parseArgs(argv) {
   const opts = {};
@@ -16,6 +18,7 @@ function parseArgs(argv) {
     if (a === "--resources") opts.resources = argv[++i];
     else if (a === "--provider") opts.provider = argv[++i];
     else if (a === "--dialect") opts.dialect = argv[++i];
+    else if (a === "--only") opts.only = argv[++i];
     else if (a === "--force") opts.force = true;
     else if (a === "--force-close") opts.forceClose = true;
     else if (a === "--no-watch") opts.noWatch = true;
@@ -27,8 +30,6 @@ function parseArgs(argv) {
     else if (a === "--check-only") opts.checkOnly = true;
     else if (a === "--version" || a === "-V") opts.version = true;
     else if (a === "--help" || a === "-h") opts.help = true;
-    else if (a === "ensure" || a === "install" || a === "restore" || a === "status" || a === "doctor" || a === "sync" || a === "watch" || a === "unwatch")
-      rest.push(a);
     else rest.push(a);
   }
   return { opts, cmd: rest[0] || null };
@@ -39,13 +40,16 @@ function mustNode18() {
   if (major < 18) throw new Error(`需要 Node.js >= 18（当前 ${process.versions.node}），CLI 层使用内置 fetch`);
 }
 
-const HELP = `zcode-model-hub v${VERSION} — 为 ZCode 桌面版拉取自定义供应商模型列表
+const FEATURE_IDS = FEATURE_ORDER.join("|");
+const HELP = `zcode-suite v${VERSION} — ZCode 桌面版统一插件（model-hub 模型拉取 + zcode+ 提示词增强）
 
-用法: zcode-model-hub <命令> [选项]
+用法: zcode-suite <命令> [选项]
 
 命令:
-  install     注入 UI 补丁（自动备份 + 手术式重打包），默认同时注册自动修复触发器
-  restore     还原官方原版 app.asar
+  install     一键注入两个特性（一次备份、一次重打包）；默认注册自动修复触发器
+              --only ${FEATURE_IDS}   只安装其中一个特性（保留已注入的另一个）
+  restore     还原基线 app.asar（默认为官方原版，两个特性一并移除）
+  remove      卸载单个特性并保留另一个: remove --only <feature>
   status      三层状态一览（CLI 层 / 注入层 / 触发器）
   doctor      深度只读体检，失败时生成兼容性报告
   ensure      一次性自愈检查（触发器内部调用；快路径仅一次 stat）
@@ -55,6 +59,7 @@ const HELP = `zcode-model-hub v${VERSION} — 为 ZCode 桌面版拉取自定义
 
 选项:
   --resources <dir>   显式指定 ZCode 的 resources 目录
+  --only <feature>    install/remove 的目标特性（${FEATURE_IDS}）
   --provider <id>     sync 目标供应商（id/名称）；--list 先列出
   --dialect <name>    openai | anthropic | gemini（默认 auto）
   --force-close       安装/还原前强制关闭 ZCode（默认拒绝在运行时写入）
@@ -66,10 +71,11 @@ const HELP = `zcode-model-hub v${VERSION} — 为 ZCode 桌面版拉取自定义
   --json              status/sync 输出 JSON
 
 示例:
-  zcode-model-hub install
-  zcode-model-hub sync --list
-  zcode-model-hub sync --provider deepseek
-  zcode-model-hub status
+  zcode-suite install                 # 一键安装两个特性
+  zcode-suite install --only zcodeplus
+  zcode-suite remove --only modelhub
+  zcode-suite sync --list
+  zcode-suite status
 `;
 
 async function cmdInstall(opts) {
@@ -77,11 +83,14 @@ async function cmdInstall(opts) {
   const res = await install({
     resourcesOverride: opts.resources,
     forceClose: opts.forceClose,
-    watch: !opts.noWatch,
-    deploySkill: !opts.noSkill,
+    only: opts.only || null,
   });
-  console.log(`[√] 注入完成 (patch targets: ${Object.keys(res.targets).join(", ")})`);
-  console.log(`    原版备份: ${res.backup}`);
+  if (res.noop) {
+    console.log(`[i] ${res.note}`);
+  } else {
+    console.log(`[√] 注入完成 (features: ${res.features.join(", ")}; patch targets: main/preload/renderer)`);
+    console.log(`    基线备份: ${res.backup}（来源: ${res.baselineSource}，全程仅此一份）`);
+  }
   if (!opts.noSkill) {
     const { deploySkill } = await import("../src/deploy-skill.mjs");
     for (const f of deploySkill()) console.log(`    用户空间已部署: ${f}`);
@@ -95,7 +104,7 @@ async function cmdInstall(opts) {
       console.log(`    [!] 自动修复触发器注册失败（不影响其他层）: ${e.message}`);
     }
   }
-  console.log(`    ${res.note}`);
+  if (!res.noop) console.log(`    ${res.note}`);
 }
 
 async function cmdRestore(opts) {
@@ -104,8 +113,15 @@ async function cmdRestore(opts) {
   console.log(`[√] ${res.note}`);
 }
 
+async function cmdRemove(opts) {
+  if (!opts.only) throw new Error("remove 需要 --only modelhub|zcodeplus");
+  const { removeFeature } = await import("../src/patch/apply.mjs");
+  const res = await removeFeature({ only: opts.only, resourcesOverride: opts.resources, forceClose: opts.forceClose });
+  console.log(`[√] ${res.note}`);
+}
+
 async function cmdEnsure(opts) {
-  const { findZcodeInstall, isZcodeRunning } = await import("../src/platform.mjs");
+  const { isZcodeRunning } = await import("../src/core/platform.mjs");
   const disc = findZcodeInstall(opts.resources);
   const ctx = {
     asarPath: disc && disc.kind === "app" ? disc.asarPath : "/nonexistent/app.asar",
@@ -190,10 +206,21 @@ async function cmdSync(opts) {
   console.log("提示: 打开 ZCode 模型选择器即可看到新模型（外部写入实时生效）。");
 }
 
+function featureStateLine(id, insp) {
+  const f = FEATURES[id];
+  if (!insp.found) return `${f.label}: 未找到 ZCode 安装`;
+  if (insp.kind === "appimage") return `${f.label}: AppImage（不支持注入）`;
+  if (!insp.layoutOk) return `${f.label}: 布局异常（${insp.layoutError || "?"}）`;
+  const m = insp.manifest;
+  if (insp.present[id]) return `${f.label}: 在位`;
+  if (m && m.features && m.features[id]) return `${f.label}: 丢失（ZCode 更新过？运行 ensure 自动修复）`;
+  return `${f.label}: 未安装`;
+}
+
 async function cmdStatus(opts) {
   const { inspectInjection } = await import("../src/patch/apply.mjs");
   const { watcherActive } = await import("../src/repair/triggers.mjs");
-  const { readPending } = await import("../src/patch/manifest.mjs");
+  const { readPending } = await import("../src/core/manifest.mjs");
   const insp = await inspectInjection({ resourcesOverride: opts.resources });
   const lines = [];
   lines.push(`平台: ${platform}   Node: ${process.versions.node}`);
@@ -209,12 +236,14 @@ async function cmdStatus(opts) {
   lines.push(`层1 CLI/技能（更新免疫）: 配置${cfgOk ? "可读" : "不可读/缺失"}，供应商 ${providerCount} 个，命令: sync / 技能 model-hub`);
   // layer 2
   if (!insp.found) lines.push("层2 注入: 未找到 ZCode 安装");
-  else if (insp.kind === "appimage") lines.push(`层2 注入: AppImage（不支持注入）`);
+  else if (insp.kind === "appimage") lines.push("层2 注入: AppImage（不支持注入）");
   else {
+    for (const id of FEATURE_ORDER) lines.push(`层2 注入 — ${featureStateLine(id, insp)}`);
     const m = insp.manifest;
-    const state = insp.sentinelPresent ? "在位" : m ? "丢失（ZCode 更新过？运行 ensure 自动修复）" : "未安装";
-    lines.push(`层2 注入: ${state}${insp.layoutOk ? "" : `（布局异常: ${insp.layoutError || "?"}）`}${insp.foreign.length ? `；检测到其他补丁: ${insp.foreign.join("、")}` : ""}`);
-    if (m) lines.push(`   记录: patchVersion=${m.patchVersion} installed=${m.installedAt}`);
+    if (m) {
+      lines.push(`   记录: patchVersion=${m.patchVersion} baseline=${m.baseline ? m.baseline.source + (m.baseline.clean ? "/clean" : "/adopted") : "?"} installed=${m.installedAt}`);
+    }
+    if (insp.foreign.length) lines.push(`   检测到其他补丁: ${insp.foreign.join("、")}`);
   }
   // layer 3
   const pend = readPending();
@@ -225,7 +254,6 @@ async function cmdStatus(opts) {
 
 async function cmdDoctor(opts) {
   const findings = [];
-  const { findZcodeInstall } = await import("../src/platform.mjs");
   const disc = findZcodeInstall(opts.resources);
   findings.push(["app", disc ? (disc.kind === "appimage" ? "appimage" : "found") : "missing"]);
   if (disc && disc.kind === "app") {
@@ -233,7 +261,11 @@ async function cmdDoctor(opts) {
     const insp = inspectInjection({ resourcesOverride: opts.resources });
     findings.push(["asar", insp.hash ? insp.hash.slice(0, 12) : "unreadable"]);
     findings.push(["layout", insp.layoutOk ? "ok" : `error: ${insp.layoutError}`]);
-    findings.push(["sentinel", insp.sentinelPresent ? "present" : "absent"]);
+    if (insp.layoutOk) {
+      for (const id of FEATURE_ORDER) {
+        findings.push([`sentinel:${id}`, insp.present[id] ? "present" : "absent"]);
+      }
+    }
     if (insp.foreign.length) findings.push(["foreign-patches", insp.foreign.join(",")]);
     if (process.platform === "darwin") {
       try {
@@ -248,18 +280,18 @@ async function cmdDoctor(opts) {
   }
   const { watcherActive } = await import("../src/repair/triggers.mjs");
   findings.push(["watcher", watcherActive() ? "registered" : "not-registered"]);
-  const { readPending } = await import("../src/patch/manifest.mjs");
+  const { readPending } = await import("../src/core/manifest.mjs");
   const pend = readPending();
   findings.push(["pending", pend ? `${pend.reason} @ ${pend.at}` : "none"]);
   try {
     mustNode18();
     findings.push(["node", process.versions.node]);
   } catch {}
-  for (const [k, v] of findings) console.log(`${k.padEnd(16)} ${v}`);
-  const bad = findings.find(([k, v]) => String(v).startsWith("error") || k === "pending" && v !== "none");
+  for (const [k, v] of findings) console.log(`${k.padEnd(20)} ${v}`);
+  const bad = findings.find(([k, v]) => String(v).startsWith("error") || (k === "pending" && v !== "none"));
   if (bad && !opts.quiet) {
     const report = { at: new Date().toISOString(), platform: process.platform, findings };
-    const dir = path.join(process.env.HOME || "", ".zcode", "model-hub");
+    const dir = path.join(process.env.ZCODE_SUITE_STATE_DIR || path.join(process.env.HOME || process.env.USERPROFILE || "", ".zcode", "zcode-suite"));
     fs.mkdirSync(dir, { recursive: true });
     const rp = path.join(dir, "doctor-report.json");
     fs.writeFileSync(rp, JSON.stringify(report, null, 2));
@@ -275,7 +307,7 @@ async function cmdWatch(opts) {
 
 async function cmdUnwatch(opts) {
   const { unwatch } = await import("../src/repair/triggers.mjs");
-  const { clearPending } = await import("../src/patch/manifest.mjs");
+  const { clearPending } = await import("../src/core/manifest.mjs");
   const r = unwatch();
   clearPending();
   console.log(`[√] 已卸载触发器 (${r.platform})${r.removed ? ": " + JSON.stringify(r.removed) : ""}`);
@@ -288,6 +320,7 @@ async function main() {
   try {
     if (cmd === "install") await cmdInstall(opts);
     else if (cmd === "restore") await cmdRestore(opts);
+    else if (cmd === "remove") await cmdRemove(opts);
     else if (cmd === "ensure") await cmdEnsure(opts);
     else if (cmd === "sync") await cmdSync(opts);
     else if (cmd === "status") await cmdStatus(opts);

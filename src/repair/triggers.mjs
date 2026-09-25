@@ -1,23 +1,31 @@
-// Auto-repair triggers. Philosophy: zero resident processes of our own —
-// every platform's already-running OS scheduler fires a one-shot
-// `ensure --quiet` (fast path = one stat call, exits in milliseconds).
+// Auto-repair triggers, unified for both features. Philosophy: zero resident
+// processes of our own — every platform's already-running OS scheduler fires
+// a one-shot `ensure --quiet` (fast path = one stat call, exits in
+// milliseconds).
 //   macOS  : LaunchAgent (RunAtLoad + WatchPaths on the .app)
 //   Windows: Scheduled Task (AtLogOn + 6h repetition) via PowerShell/schtasks
 //   Linux  : systemd user .path unit (PathChanged) + oneshot service
+// Registering also removes the pre-suite plugins' triggers (they point at
+// their own CLIs and would fight the unified manifest).
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
-import { OS, nodeBinPath, findZcodeInstall } from "../platform.mjs";
+import { OS, nodeBinPath, findZcodeInstall } from "../core/platform.mjs";
 
-const LABEL = "com.zcode-model-hub.repair";
+const LABEL = "com.zcode-suite.repair";
+const LEGACY_LABELS = ["com.zcode-model-hub.repair"];
+const WIN_TASK = "ZCodeSuiteRepair";
+const LEGACY_WIN_TASKS = ["ZCodeModelHubRepair"];
+const LINUX_UNIT = "zcode-suite-repair";
+const LEGACY_LINUX_UNITS = ["zcode-model-hub-repair"];
 
 function cliPath() {
-  return fs.realpathSync(new URL("../../bin/zcode-model-hub.mjs", import.meta.url));
+  return fs.realpathSync(new URL("../../bin/zcode-suite.mjs", import.meta.url));
 }
 
 function logDir() {
-  const d = path.join(os.homedir(), ".zcode", "model-hub");
+  const d = path.join(os.homedir(), ".zcode", "zcode-suite");
   fs.mkdirSync(d, { recursive: true });
   return d;
 }
@@ -55,6 +63,20 @@ function launchAgentPlist(asarPath) {
 `;
 }
 
+function removeLegacyTriggersMacOS() {
+  const dir = path.join(os.homedir(), "Library", "LaunchAgents");
+  for (const label of LEGACY_LABELS) {
+    const plist = path.join(dir, `${label}.plist`);
+    try {
+      if (fs.existsSync(plist)) {
+        const uid = spawnSync("id", ["-u"], { encoding: "utf8" }).stdout.trim();
+        spawnSync("launchctl", ["bootout", `gui/${uid}/${label}`], { timeout: 10000 });
+        fs.rmSync(plist, { force: true });
+      }
+    } catch {}
+  }
+}
+
 function watchMacOS(install) {
   const dir = path.join(os.homedir(), "Library", "LaunchAgents");
   const plist = path.join(dir, `${LABEL}.plist`);
@@ -69,6 +91,7 @@ function watchMacOS(install) {
     const r = spawnSync("launchctl", ["bootstrap", `gui/${uid}`, plist], { timeout: 10000, encoding: "utf8" });
     if (r.status !== 0 && !/already|bootstrapped/i.test(r.stderr || ""))
       throw new Error(`launchctl bootstrap failed: ${(r.stderr || "").trim()}`);
+    removeLegacyTriggersMacOS();
     return { trigger: plist };
   }
   const uid = spawnSync("id", ["-u"], { encoding: "utf8" }).stdout.trim();
@@ -95,7 +118,7 @@ function watchWindows(install) {
       "$t.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 6)).Repetition",
       "$triggers += $t",
       "$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -StartWhenAvailable",
-      "Register-ScheduledTask -TaskName 'ZCodeModelHubRepair' -Action (New-ScheduledTaskAction -Execute $action) -Trigger $triggers -Settings $s -Force | Out-Null",
+      `Register-ScheduledTask -TaskName '${WIN_TASK}' -Action (New-ScheduledTaskAction -Execute $action) -Trigger $triggers -Settings $s -Force | Out-Null`,
       "Write-Output OK",
     ].join("; ");
     const r = spawnSync(
@@ -107,36 +130,45 @@ function watchWindows(install) {
       // fallback: schtasks hourly (no logon trigger, still covers updates)
       const f = spawnSync(
         "schtasks",
-        ["/Create", "/F", "/TN", "ZCodeModelHubRepair", "/SC", "HOURLY", "/MO", "1", "/TR", action],
+        ["/Create", "/F", "/TN", WIN_TASK, "/SC", "HOURLY", "/MO", "1", "/TR", action],
         { encoding: "utf8", timeout: 30000 },
       );
       if (f.status !== 0) throw new Error(`schtasks failed: ${(f.stderr || "").trim()}`);
-      return { trigger: "schtasks ZCodeModelHubRepair (hourly fallback)" };
+      removeLegacyTriggersWindows();
+      return { trigger: `schtasks ${WIN_TASK} (hourly fallback)` };
     }
-    return { trigger: "Scheduled Task ZCodeModelHubRepair (AtLogOn + 6h)" };
+    removeLegacyTriggersWindows();
+    return { trigger: `Scheduled Task ${WIN_TASK} (AtLogOn + 6h)` };
   }
-  spawnSync("schtasks", ["/Delete", "/F", "/TN", "ZCodeModelHubRepair"], { timeout: 30000 });
-  return { removed: "ZCodeModelHubRepair" };
+  spawnSync("schtasks", ["/Delete", "/F", "/TN", WIN_TASK], { timeout: 30000 });
+  return { removed: WIN_TASK };
+}
+
+function removeLegacyTriggersWindows() {
+  for (const task of LEGACY_WIN_TASKS) {
+    spawnSync("schtasks", ["/Delete", "/F", "/TN", task], { timeout: 30000 });
+  }
 }
 
 function watcherActiveWindows() {
-  const r = spawnSync("schtasks", ["/Query", "/TN", "ZCodeModelHubRepair"], { encoding: "utf8", timeout: 15000 });
+  const r = spawnSync("schtasks", ["/Query", "/TN", WIN_TASK], { encoding: "utf8", timeout: 15000 });
   return r.status === 0;
 }
 
 // ---------- Linux ----------
 function watchLinux(install) {
   const unitDir = path.join(os.homedir(), ".config", "systemd", "user");
-  const service = path.join(unitDir, "zcode-model-hub-repair.service");
-  const pathUnit = path.join(unitDir, "zcode-model-hub-repair.path");
+  const service = path.join(unitDir, `${LINUX_UNIT}.service`);
+  const pathUnit = path.join(unitDir, `${LINUX_UNIT}.path`);
   const node = nodeBinPath();
   const cli = cliPath();
   const ctl = (args) => spawnSync("systemctl", ["--user", ...args], { encoding: "utf8", timeout: 20000 });
 
   if (!install) {
-    ctl(["disable", "--now", "zcode-model-hub-repair.path"]);
+    ctl(["disable", "--now", `${LINUX_UNIT}.path`]);
     fs.rmSync(service, { force: true });
     fs.rmSync(pathUnit, { force: true });
+    removeLegacyTriggersLinux(ctl, unitDir);
     ctl(["daemon-reload"]);
     return { removed: [service, pathUnit] };
   }
@@ -149,7 +181,7 @@ function watchLinux(install) {
   fs.writeFileSync(
     service,
     `[Unit]
-Description=zcode-model-hub auto-repair (one-shot ensure)
+Description=zcode-suite auto-repair (one-shot ensure, model-hub + zcode+)
 
 [Service]
 Type=oneshot
@@ -159,27 +191,38 @@ ExecStart=${node} ${cli} ensure --quiet
   fs.writeFileSync(
     pathUnit,
     `[Unit]
-Description=zcode-model-hub repair trigger (ZCode files changed)
+Description=zcode-suite repair trigger (ZCode files changed)
 
 [Path]
 PathChanged=${disc.asarPath}
 PathExists=${disc.asarPath}
-Unit=zcode-model-hub-repair.service
+Unit=${LINUX_UNIT}.service
 
 [Install]
 WantedBy=default.target
 `,
   );
   ctl(["daemon-reload"]);
-  ctl(["disable", "--now", "zcode-model-hub-repair.path"]);
-  const r = ctl(["enable", "--now", "zcode-model-hub-repair.path"]);
+  ctl(["disable", "--now", `${LINUX_UNIT}.path`]);
+  removeLegacyTriggersLinux(ctl, unitDir);
+  const r = ctl(["enable", "--now", `${LINUX_UNIT}.path`]);
   if (r.status !== 0)
     throw new Error(`systemctl enable failed: ${(r.stderr || r.stdout || "").trim()}（无 systemd 用户会话？可改用 .desktop 包装器）`);
   return { trigger: [service, pathUnit] };
 }
 
+function removeLegacyTriggersLinux(ctl, unitDir) {
+  for (const unit of LEGACY_LINUX_UNITS) {
+    try {
+      ctl(["disable", "--now", `${unit}.path`]);
+      fs.rmSync(path.join(unitDir, `${unit}.service`), { force: true });
+      fs.rmSync(path.join(unitDir, `${unit}.path`), { force: true });
+    } catch {}
+  }
+}
+
 function watcherActiveLinux() {
-  const r = spawnSync("systemctl", ["--user", "is-enabled", "zcode-model-hub-repair.path"], {
+  const r = spawnSync("systemctl", ["--user", "is-enabled", `${LINUX_UNIT}.path`], {
     encoding: "utf8",
     timeout: 15000,
   });
