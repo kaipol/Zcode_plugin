@@ -20,6 +20,7 @@ function parseArgs(argv) {
     else if (a === "--dialect") opts.dialect = argv[++i];
     else if (a === "--only") opts.only = argv[++i];
     else if (a === "--force") opts.force = true;
+    else if (a === "--dry-run") opts.dryRun = true;
     else if (a === "--force-close") opts.forceClose = true;
     else if (a === "--no-watch") opts.noWatch = true;
     else if (a === "--no-skill") opts.noSkill = true;
@@ -139,6 +140,32 @@ async function cmdEnsure(opts) {
   }
   if (opts.json) console.log(JSON.stringify(r, null, 2));
   else console.log(`[${r.action}]${r.error ? " " + r.error : ""}${r.detail ? " " + JSON.stringify(r.detail) : ""}`);
+}
+
+// Adds the reasoningLevel map to every auto-added model that lacks it. Backs up
+// the config first, writes atomically, then re-reads to confirm the result.
+async function cmdBackfillReasoning(opts) {
+  const { readConfig, writeConfigAtomic, backfillReasoningMaps } = await import("../src/config.mjs");
+  const cfgPath = zcodeProviderConfigPath();
+  const cfg = readConfig(cfgPath);
+  if (!cfg) throw new Error(`未找到 ${cfgPath}`);
+  const preview = backfillReasoningMaps(structuredClone(cfg));
+  if (opts.dryRun) {
+    console.log(`[i] 预览：将补充 ${preview.changed} 个模型，跳过 ${preview.skipped} 个（非自动添加 / 手动规则 / 已隐藏 / 已有映射）`);
+    return;
+  }
+  if (!preview.changed) {
+    console.log("[√] 没有需要补充映射的模型。");
+    return;
+  }
+  const res = backfillReasoningMaps(cfg);
+  writeConfigAtomic(cfg, cfgPath);
+  const check = readConfig(cfgPath);
+  const after = backfillReasoningMaps(structuredClone(check));
+  if (after.changed !== 0) throw new Error(`回读校验失败：仍有 ${after.changed} 个模型缺少映射`);
+  console.log(`[√] 已为 ${res.changed} 个模型补充推理强度映射（跳过 ${res.skipped} 个）。`);
+  console.log(`    配置备份: ${cfgPath}.model-hub.bak`);
+  console.log("    完全退出并重启 ZCode 后生效。");
 }
 
 async function cmdSync(opts) {
@@ -323,6 +350,7 @@ async function main() {
     else if (cmd === "remove") await cmdRemove(opts);
     else if (cmd === "ensure") await cmdEnsure(opts);
     else if (cmd === "sync") await cmdSync(opts);
+    else if (cmd === "backfill-reasoning") await cmdBackfillReasoning(opts);
     else if (cmd === "status") await cmdStatus(opts);
     else if (cmd === "doctor") await cmdDoctor(opts);
     else if (cmd === "watch") await cmdWatch(opts);

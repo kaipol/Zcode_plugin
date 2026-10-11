@@ -205,6 +205,31 @@ function assertIntelligent(cfg, providerId, modelId) {
   assert.equal(hidden, false, `${modelId} is disabled by a provider-model rule`);
 }
 
+// Reasoning-map rules are the only provider-model rules written for auto-added
+// models; they are checked separately so hide/unhide semantics stay exact.
+const isReasoningMapRule = (r) => !!(r.config && r.config.optionSpecs && r.config.optionSpecs.reasoningLevel && r.config.optionSpecs.reasoningLevel.map);
+// Strip the reasoning map from each rule; a rule that held nothing but the
+// map (plus enabled:true) was written purely for auto-added models and is
+// dropped. Rules with real tuning (e.g. a template's contextWindow) remain.
+const withoutReasoningMaps = (rules) =>
+  rules.flatMap((r) => {
+    if (!isReasoningMapRule(r)) return [r];
+    const { optionSpecs, ...cfg } = r.config;
+    const { reasoningLevel, ...specs } = optionSpecs;
+    const rest = { ...cfg };
+    if (Object.keys(specs).length) rest.optionSpecs = specs;
+    if (Object.keys(rest).length === 1 && rest.enabled === true) return [];
+    return [{ ...r, config: rest }];
+  });
+
+function assertReasoningMapped(cfg, providerId, modelIds) {
+  for (const id of modelIds) {
+    const rule = mcrOf(cfg).providerModelRules.find((r) => r.providerId === providerId && r.modelId === id);
+    assert.ok(rule && isReasoningMapRule(rule), `${id} must carry the reasoningLevel map`);
+    assert.equal(rule.config.enabled, true, `${id} reasoning rule must stay enabled`);
+  }
+}
+
 function manualRulesFor(cfg, providerId, modelId) {
   return mcrOf(cfg).manualProviderModelRules.filter((r) => r.providerId === providerId && r.modelId === modelId);
 }
@@ -282,6 +307,8 @@ const uiMerge = new Function(
     "hideModelOf",
     "unhideModelOf",
     "enableModelOf",
+    "reasoningLevelMapText",
+    "ensureReasoningMapOf",
   ]) + "\nreturn { mergeFinalState: mergeFinalState };",
 )();
 
@@ -314,7 +341,8 @@ check("pull adds models without any manual rule (intelligent config on)", () => 
   assert.deepEqual(ruleConfigOf(cfg).modelOrder, ["old-model", "m1", "m2", "m3"]);
   assert.deepEqual(ruleConfigOf(cfg).personalModelIds, ["old-model", "m1", "m2", "m3"]);
   assert.deepEqual(mcrOf(cfg).manualProviderModelRules, []);
-  assert.deepEqual(mcrOf(cfg).providerModelRules, fixture().config.modelConfigRules.providerModelRules);
+  assert.deepEqual(withoutReasoningMaps(mcrOf(cfg).providerModelRules), fixture().config.modelConfigRules.providerModelRules);
+  assertReasoningMapped(cfg, PROVIDER_KEY, ["m1", "m2", "m3"]);
   assert.deepEqual(readTombstones(), {});
   for (const id of ["m1", "m2", "m3"]) assertIntelligent(cfg, PROVIDER_KEY, id);
   assertValid(cfg, "pull");
@@ -328,7 +356,8 @@ check("deleting a personal model leaves no manual/provider rule behind", () => {
   assert.deepEqual(ruleConfigOf(cfg).personalModelIds, ["old-model", "m1", "m2"]);
   assert.deepEqual(ruleConfigOf(cfg).modelOrder, ["old-model", "m1", "m2"]);
   assert.deepEqual(mcrOf(cfg).manualProviderModelRules, []);
-  assert.deepEqual(mcrOf(cfg).providerModelRules, fixture().config.modelConfigRules.providerModelRules);
+  assert.deepEqual(withoutReasoningMaps(mcrOf(cfg).providerModelRules), fixture().config.modelConfigRules.providerModelRules);
+  assertReasoningMapped(cfg, PROVIDER_KEY, ["m1", "m2"]);
   assert.deepEqual(readTombstones()[PROVIDER_KEY], ["m3"]);
   assertValid(cfg, "delete personal");
 });
@@ -340,10 +369,11 @@ check("deleting a template built-in writes an enabled:false provider-model rule"
   mergeFetchedModels(cfg, PROVIDER_KEY, models("m1", "m2", "m3"), { selected: ["m1", "m2", "m3"] });
   mergeFetchedModels(cfg, PROVIDER_KEY, models("m1", "m2", "m3"), { selected: ["m1", "m2"] });
   mergeFetchedModels(cfg, PROVIDER_KEY, models("m1", "m2", "tpl-a"), { selected: ["m1", "m2"] });
-  assert.deepEqual(mcrOf(cfg).providerModelRules, [
+  assert.deepEqual(withoutReasoningMaps(mcrOf(cfg).providerModelRules), [
     { providerId: "np", modelId: "old-model", config: { enabled: true } },
     { providerId: "np", modelId: "tpl-a", config: { enabled: false, properties: { contextWindow: 200000 } } },
   ]);
+  assertReasoningMapped(cfg, "np", ["m1", "m2"]);
   assert.deepEqual(ruleConfigOf(cfg).modelOrder, ["old-model", "m1", "m2"]);
   assert.deepEqual(ruleConfigOf(cfg).personalModelIds, ["old-model", "m1", "m2"]);
   assert.deepEqual(mcrOf(cfg).manualProviderModelRules, []);
@@ -363,7 +393,8 @@ check("re-checking a hidden template model unhides it", () => {
   const cfg = fixture();
   for (const step of CYCLE) mergeFetchedModels(cfg, PROVIDER_KEY, models(...step.fetched), { selected: step.selected });
   // tpl-a is back and its app-written rule is restored, not dropped
-  assert.deepEqual(mcrOf(cfg).providerModelRules, fixture().config.modelConfigRules.providerModelRules);
+  assert.deepEqual(withoutReasoningMaps(mcrOf(cfg).providerModelRules), fixture().config.modelConfigRules.providerModelRules);
+  assertReasoningMapped(cfg, PROVIDER_KEY, ["m1", "m2"]);
   assert.deepEqual(ruleConfigOf(cfg).modelOrder, ["old-model", "m1", "m2", "tpl-a"]);
   // template models stay out of personalModelIds — the template defines them
   assert.deepEqual(ruleConfigOf(cfg).personalModelIds, ["old-model", "m1", "m2"]);

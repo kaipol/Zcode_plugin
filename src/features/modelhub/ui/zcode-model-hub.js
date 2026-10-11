@@ -665,6 +665,7 @@
           if (hideRule && hideRule.config && hideRule.config.enabled === false) {
             enableModelOf(mcr, providerId, fid);
           }
+          ensureReasoningMapOf(mcr, providerId, fid);
         } else if (savedVisible[fid]) {
           // unchecked AND currently saved -> explicit delete
           deleted[fid] = 1;
@@ -775,6 +776,35 @@
     existing.config = {};
     for (var k2 in cfg3) existing.config[k2] = cfg3[k2];
     existing.config.enabled = true;
+  }
+
+  function reasoningLevelMapText() {
+    return 'reasoningLevel == "disabled"\n  ? {\n      "thinking": {\n        "type": "disabled"\n      }\n    }\n  : {\n      "thinking": {\n        "type": "enabled"\n      },\n      "reasoning_effort": reasoningLevel\n    }';
+  }
+
+  function ensureReasoningMapOf(mcr, providerId, modelId) {
+    var rule = findSmartRuleOf(mcr, providerId, modelId);
+    if (!rule) {
+      mcr.providerModelRules.push({
+        providerId: String(providerId),
+        modelId: String(modelId),
+        config: { enabled: true, optionSpecs: { reasoningLevel: { map: reasoningLevelMapText() } } },
+      });
+      return;
+    }
+    var cfg4 = rule.config && typeof rule.config === "object" ? rule.config : {};
+    var specs = cfg4.optionSpecs && typeof cfg4.optionSpecs === "object" ? cfg4.optionSpecs : {};
+    var rl = specs.reasoningLevel && typeof specs.reasoningLevel === "object" ? specs.reasoningLevel : {};
+    var nextRl = {};
+    for (var k3 in rl) nextRl[k3] = rl[k3];
+    nextRl.map = reasoningLevelMapText();
+    var nextSpecs = {};
+    for (var k4 in specs) nextSpecs[k4] = specs[k4];
+    nextSpecs.reasoningLevel = nextRl;
+    var nextCfg = {};
+    for (var k5 in cfg4) nextCfg[k5] = cfg4[k5];
+    nextCfg.optionSpecs = nextSpecs;
+    rule.config = nextCfg;
   }
 
   function triggerRefresh(providerName) {

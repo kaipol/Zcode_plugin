@@ -309,6 +309,63 @@ function enableSmartConfig(mcr, providerId, modelId) {
   if (mcr) dropManualRule(mcr, providerId, modelId);
 }
 
+// Reasoning-effort mapping, same shape as ZCode's builtin rules. Written into
+// the model's provider-model rule (never a manual rule), so the model keeps
+// intelligent configuration while the request body carries thinking/effort
+// fields the upstream accepts.
+export const REASONING_LEVEL_MAP = `reasoningLevel == "disabled"
+  ? {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  : {
+      "thinking": {
+        "type": "enabled"
+      },
+      "reasoning_effort": reasoningLevel
+    }`;
+
+export function backfillReasoningMaps(cfg) {
+  const mcr = modelConfigRules(cfg);
+  if (!mcr) return { changed: 0, skipped: 0 };
+  let changed = 0;
+  let skipped = 0;
+  for (const p of providerRules(cfg) || []) {
+    if (!p || typeof p !== "object") continue;
+    const providerId = String(p.providerId ?? p.id ?? "");
+    const personal = new Set(Array.isArray(p.config?.personalModelIds) ? p.config.personalModelIds.map(String) : []);
+    for (const modelId of Array.isArray(p.config?.modelOrder) ? p.config.modelOrder.map(String) : []) {
+      // only auto-added (personal) models; template built-ins and models
+      // with a manual or hide rule are left exactly as ZCode/the user set them
+      if (!personal.has(modelId)) { skipped++; continue; }
+      if (findManualRule(mcr, providerId, modelId)) { skipped++; continue; }
+      const rule = findSmartRule(mcr, providerId, modelId);
+      if (rule?.config?.enabled === false) { skipped++; continue; }
+      if (rule?.config?.optionSpecs?.reasoningLevel?.map === REASONING_LEVEL_MAP) { skipped++; continue; }
+      ensureReasoningMap(mcr, providerId, modelId);
+      changed++;
+    }
+  }
+  return { changed, skipped };
+}
+
+function ensureReasoningMap(mcr, providerId, modelId) {
+  const rule = findSmartRule(mcr, providerId, modelId);
+  if (!rule) {
+    mcr.providerModelRules.push({
+      providerId: String(providerId),
+      modelId: String(modelId),
+      config: { enabled: true, optionSpecs: { reasoningLevel: { map: REASONING_LEVEL_MAP } } },
+    });
+    return;
+  }
+  const cfg = rule.config && typeof rule.config === "object" ? rule.config : {};
+  const specs = cfg.optionSpecs && typeof cfg.optionSpecs === "object" ? cfg.optionSpecs : {};
+  const rl = specs.reasoningLevel && typeof specs.reasoningLevel === "object" ? specs.reasoningLevel : {};
+  rule.config = { ...cfg, optionSpecs: { ...specs, reasoningLevel: { ...rl, map: REASONING_LEVEL_MAP } } };
+}
+
 // A provider-model rule with enabled === false is how a model gets hidden. It
 // is the exact shape ZCode itself writes for its enable/disable toggle
 // (setPersonalModelEnabled), it keeps the model on intelligent configuration,
@@ -402,6 +459,7 @@ function mergeNewModels(cfg, entry, fetched, selected) {
     // re-adding must also clear a hide rule (e.g. a template built-in that was
     // deleted earlier), otherwise the model stays disabled
     if (findSmartRule(mcr, providerId, id)?.config?.enabled === false) enableModel(mcr, providerId, id);
+    ensureReasoningMap(mcr, providerId, id);
   }
 
   if (selected !== undefined) {
