@@ -13,12 +13,13 @@ if (-not $node) { Write-Host "[x] Node.js >= 18 required: https://nodejs.org" -F
 $major = [int]($node.Version.Split(".")[0])
 if ($major -lt 18) { Write-Host "[x] Node.js >= 18 required (current $($node.Version))" -ForegroundColor Red; exit 1 }
 
-$args = @()
-if ($Only) { $args += @("--only", $Only) }
-if ($ForceClose) { $args += "--force-close" }
-if ($Resources) { $args += @("--resources", $Resources) }
+# $args is a reserved automatic variable in PowerShell — never assign to it.
+$cliArgs = @()
+if ($Only) { $cliArgs += @("--only", $Only) }
+if ($ForceClose) { $cliArgs += "--force-close" }
+if ($Resources) { $cliArgs += @("--resources", $Resources) }
 
 Write-Host "[i] one-click install zcode-suite (model-hub + zcode+): one backup, one repack, one repair trigger"
-node bin/zcode-suite.mjs install @args
+node bin/zcode-suite.mjs install @cliArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "[i] done. Fully quit and restart ZCode to see both buttons."

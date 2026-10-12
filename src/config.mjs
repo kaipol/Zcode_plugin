@@ -363,6 +363,9 @@ function ensureReasoningMap(mcr, providerId, modelId) {
   const cfg = rule.config && typeof rule.config === "object" ? rule.config : {};
   const specs = cfg.optionSpecs && typeof cfg.optionSpecs === "object" ? cfg.optionSpecs : {};
   const rl = specs.reasoningLevel && typeof specs.reasoningLevel === "object" ? specs.reasoningLevel : {};
+  // fill only when absent — a map written by ZCode, another tool or the user
+  // must never be silently replaced by resaving the pull modal
+  if (typeof rl.map === "string" && rl.map.trim()) return;
   rule.config = { ...cfg, optionSpecs: { ...specs, reasoningLevel: { ...rl, map: REASONING_LEVEL_MAP } } };
 }
 

@@ -171,8 +171,16 @@ function importLegacyTombstones(stateDirOverride) {
 //      feature payloads — callers detect that via sentinel scans)
 // Returns { asar, originalHash, source } — never null.
 export function resolveBaseline(asarPath, stateDirOverride) {
+  const liveHash = sha256File(asarPath);
   const m = loadManifest(stateDirOverride);
-  if (m && m.originalHash) {
+  // A recorded backup may serve as baseline only while the archive on disk is
+  // either that baseline itself or the patched state we built FROM it. After a
+  // ZCode update the live asar is a NEW official build matching neither hash —
+  // repacking from the old backup would downgrade the whole app, so that case
+  // falls through to adopting the live file.
+  const recordedBaselineUsable =
+    !!m && !!m.originalHash && (liveHash === m.originalHash || (m.patchedHash && liveHash === m.patchedHash));
+  if (recordedBaselineUsable) {
     const own = backupPathFor(m.originalHash, stateDirOverride);
     if (fs.existsSync(own) && sha256File(own) === m.originalHash) {
       return { asar: own, originalHash: m.originalHash, source: "suite" };
@@ -183,6 +191,7 @@ export function resolveBaseline(asarPath, stateDirOverride) {
     try {
       const lm = JSON.parse(fs.readFileSync(path.join(L.dir, "manifest.json"), "utf8"));
       if (!lm || !lm.originalHash) continue;
+      if (lm.originalHash !== liveHash) continue;
       if (lm.asarPath && path.resolve(lm.asarPath) !== path.resolve(asarPath)) continue;
       const bp = path.join(L.dir, "backups", lm.originalHash, "app.asar");
       if (!fs.existsSync(bp) || sha256File(bp) !== lm.originalHash) continue;
@@ -201,8 +210,10 @@ export function resolveBaseline(asarPath, stateDirOverride) {
     importLegacyTombstones(stateDirOverride);
     return { asar: imported, originalHash: win.originalHash, source: `legacy:${win.id}` };
   }
-  const h = sha256File(asarPath);
-  const adopted = importBackupCopy(asarPath, h, stateDirOverride);
+  // Live differs from every recorded baseline: it IS the current official
+  // build (fresh install or post-update). Adopt it — never resurrect the old
+  // build from a backup.
+  const adopted = importBackupCopy(asarPath, liveHash, stateDirOverride);
   importLegacyTombstones(stateDirOverride);
-  return { asar: adopted, originalHash: h, source: "adopted" };
+  return { asar: adopted, originalHash: liveHash, source: "adopted" };
 }

@@ -334,6 +334,7 @@
   function openModal(result, creds, sets, templates) {
     var state = {};
     var models = result.models || [];
+    var remoteCount = models.length;
     for (var i = 0; i < models.length; i++) {
       var m = models[i];
       var isSaved = sets && sets.visible[m.id] === 1;
@@ -343,6 +344,22 @@
       // checking adds them.
       state[m.id] = { savedVisible: isSaved, wasHidden: isHidden, selected: isSaved, vision: !!m.visionGuess, probing: false };
     }
+
+    // Locally saved models the remote list no longer returns ("远程已无").
+    // They join the state as saved (checked = keep) so the user can uncheck
+    // them in one click and delete them on save.
+    var localOnly = [];
+    if (sets && sets.visible) {
+      var fetchedSet = {};
+      for (i = 0; i < models.length; i++) fetchedSet[models[i].id] = 1;
+      for (var sid in sets.visible) {
+        if (fetchedSet[sid]) continue;
+        localOnly.push({ id: sid, visionGuess: false });
+        state[sid] = { savedVisible: true, wasHidden: false, selected: true, vision: false, probing: false, absent: true };
+      }
+      for (i = 0; i < localOnly.length; i++) models.push(localOnly[i]);
+    }
+    var localOnlyCount = localOnly.length;
 
     var overlay = document.createElement("div");
     overlay.id = "zcode-model-hub-modal";
@@ -364,7 +381,7 @@
     }
 
     var header = el("div", "display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid " + (dark ? "#333" : "#eee"));
-    header.appendChild(el("div", "font-weight:600;font-size:14px", "拉取到 " + models.length + " 个模型（" + result.dialect + "）"));
+    header.appendChild(el("div", "font-weight:600;font-size:14px", "拉取到 " + remoteCount + " 个模型（" + result.dialect + "）" + (localOnlyCount ? "，本地独有 " + localOnlyCount : "")));
     var closeBtn = el("button", "background:none;border:none;cursor:pointer;font-size:16px;color:inherit", "✕");
     closeBtn.addEventListener("click", function () {
       overlay.remove();
@@ -384,33 +401,61 @@
     toolbar.appendChild(toolBtn("清空", function () { setAll(false); }));
     var probeBtn = toolBtn("探测视觉(勾选)", function () { probeChecked(); });
     toolbar.appendChild(probeBtn);
+    if (localOnlyCount) {
+      toolbar.appendChild(toolBtn("取消勾选远程已无（" + localOnlyCount + "）", function () {
+        var n = 0;
+        for (var i = 0; i < models.length; i++) {
+          var st = state[models[i].id];
+          if (st.absent && st.selected) { st.selected = false; n++; }
+        }
+        buildRows();
+        refreshTabs();
+        updateCounts();
+        if (n) toast("已取消勾选 " + n + " 个本地独有模型，确认保存后将删除", false);
+      }));
+    }
 
-    // ---- sub views: 未保存 (default) / 已保存 ----
+    // ---- sub views: 未保存 (default) / 已保存 / 远程已无(本地独有) ----
     var activeTab = "new";
     var tabBar = el("div", "display:flex;gap:6px;padding:10px 18px 0");
     var tabNew = el("button", "", "未保存");
     var tabSaved = el("button", "", "已保存");
+    var tabGone = localOnlyCount ? el("button", "", "远程已无（" + localOnlyCount + "）") : null;
     tabNew.type = tabSaved.type = "button";
+    if (tabGone) tabGone.type = "button";
     function tabStyle(active) {
       return "padding:5px 14px;border-radius:8px;font-size:12px;cursor:pointer;border:1px solid " +
         (active ? "transparent;background:#2d6cdf;color:#fff" : (dark ? "transparent;background:rgba(128,128,128,.15);color:inherit" : "transparent;background:rgba(128,128,128,.1);color:inherit"));
     }
+    function rowInTab(st) {
+      if (activeTab === "gone") return !!st.absent;
+      return activeTab === "saved" ? (st.savedVisible && !st.absent) : !st.savedVisible;
+    }
     function refreshTabs() {
       var nNew = 0;
       var nSaved = 0;
+      var nGone = 0;
       for (var k in state) {
-        if (state[k].savedVisible) nSaved++;
+        if (state[k].absent) nGone++;
+        else if (state[k].savedVisible) nSaved++;
         else nNew++;
       }
       tabNew.textContent = "未保存（" + nNew + "）";
       tabSaved.textContent = "已保存（" + nSaved + "）";
+      if (tabGone) tabGone.textContent = "远程已无（" + nGone + "）";
       tabNew.style.cssText = tabStyle(activeTab === "new");
       tabSaved.style.cssText = tabStyle(activeTab === "saved");
+      if (tabGone) {
+        tabGone.style.cssText = tabStyle(activeTab === "gone");
+        tabGone.style.display = nGone ? "" : "none";
+      }
     }
     tabNew.addEventListener("click", function () { activeTab = "new"; refreshTabs(); buildRows(); });
     tabSaved.addEventListener("click", function () { activeTab = "saved"; refreshTabs(); buildRows(); });
+    if (tabGone) tabGone.addEventListener("click", function () { activeTab = "gone"; refreshTabs(); buildRows(); });
     tabBar.appendChild(tabNew);
     tabBar.appendChild(tabSaved);
+    if (tabGone) tabBar.appendChild(tabGone);
 
     var list = el("div", "flex:1;overflow-y:auto;padding:4px 12px");
     var rows = {};
@@ -431,7 +476,7 @@
         // close over the LAST iteration's cb/st/row and all checkbox clicks
         // would silently be no-ops ("saved 0" / "uncheck ignored").
         const st = state[m.id];
-        const inTab = activeTab === "saved" ? st.savedVisible : !st.savedVisible;
+        const inTab = rowInTab(st);
         if (!inTab) continue;
         shown++;
         const row = el("label", "display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:8px;cursor:pointer");
@@ -453,7 +498,11 @@
         if (st.probing) row.appendChild(el("span", "font-size:11px;opacity:.7", "探测中…"));
         else if (st.visionProbed) row.appendChild(badge(st.vision ? "视觉 ✓" : "无视觉", st.vision ? "rgba(34,197,94,.18)" : "rgba(120,120,120,.18)"));
         else if (st.vision) row.appendChild(badge("疑似视觉", "rgba(34,197,94,.12)"));
-        if (activeTab === "saved") {
+        if (activeTab === "gone") {
+          row.style.background = st.selected ? (dark ? "rgba(96,165,250,.08)" : "rgba(96,165,250,.06)") : "rgba(192,57,43,.08)";
+          row.appendChild(badge("远程已无", "rgba(214,132,20,.22)"));
+          row.appendChild(badge(st.selected ? "保留" : "将删除", st.selected ? "rgba(120,120,120,.15)" : "rgba(192,57,43,.18)"));
+        } else if (activeTab === "saved") {
           row.style.background = st.selected ? (dark ? "rgba(96,165,250,.08)" : "rgba(96,165,250,.06)") : "rgba(192,57,43,.08)";
           row.appendChild(badge(st.selected ? "保留" : "将删除", st.selected ? "rgba(120,120,120,.15)" : "rgba(192,57,43,.18)"));
         } else {
@@ -467,8 +516,7 @@
     function setAll(mode) {
       for (var i = 0; i < models.length; i++) {
         const st = state[models[i].id];
-        const inTab = activeTab === "saved" ? st.savedVisible : !st.savedVisible;
-        if (!inTab) continue;
+        if (!rowInTab(st)) continue;
         st.selected = mode === true;
       }
       buildRows();
@@ -795,6 +843,8 @@
     var cfg4 = rule.config && typeof rule.config === "object" ? rule.config : {};
     var specs = cfg4.optionSpecs && typeof cfg4.optionSpecs === "object" ? cfg4.optionSpecs : {};
     var rl = specs.reasoningLevel && typeof specs.reasoningLevel === "object" ? specs.reasoningLevel : {};
+    // fill only when absent — an existing map is never silently replaced
+    if (typeof rl.map === "string" && rl.map.replace(/\s+/g, "")) return;
     var nextRl = {};
     for (var k3 in rl) nextRl[k3] = rl[k3];
     nextRl.map = reasoningLevelMapText();
