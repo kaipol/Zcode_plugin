@@ -44,8 +44,8 @@ test("install after a ZCode update patches the new build in place", async () => 
   const mainTxt = entryText(fx.asarPath, targets.main);
   assert.ok(mainTxt.includes("app main v2"), "new build content must survive the repack");
   assert.ok(!mainTxt.includes("app main v1"), "old build content must not be resurrected");
-  assert.ok(mainTxt.includes("modelhub:read-config") && mainTxt.includes("zcodeplus:request"));
-  assert.deepEqual(sentinelsPresent(fx.asarPath, targets), { modelhub: true, zcodeplus: true });
+  assert.ok(mainTxt.includes("modelhub:read-config") && mainTxt.includes("zcodeplus:request") && mainTxt.includes("sessionrewind:request"));
+  assert.deepEqual(sentinelsPresent(fx.asarPath, targets), { modelhub: true, zcodeplus: true, sessionrewind: true });
 
   // manifest now records the NEW official baseline; restore returns to it
   const m = loadManifest();

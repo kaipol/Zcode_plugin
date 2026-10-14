@@ -23,6 +23,9 @@ const files = [
   "src/features/payloads.mjs",
   "src/features/payloads.embedded.mjs",
   "src/features/zcodeplus/adapt.mjs",
+  "src/features/sessionrewind/main-handlers.js",
+  "src/features/sessionrewind/preload-bridge.cjs",
+  "src/features/sessionrewind/ui/zcode-session-rewind.js",
   "src/features/modelhub/main-handlers.js",
   "src/features/modelhub/preload-bridge.cjs",
   "src/features/modelhub/ui/zcode-model-hub.js",
@@ -30,6 +33,8 @@ const files = [
   "src/features/zcodeplus/preload-bridge.cjs",
   "src/features/zcodeplus/inject.js",
   "scripts/verify-smart-config.mjs",
+  "scripts/backfill-reasoning.mjs",
+  "scripts/session-rewind.mjs",
   "scripts/build.mjs",
 ];
 

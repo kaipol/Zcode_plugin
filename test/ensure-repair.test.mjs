@@ -30,6 +30,7 @@ test("ensure repairs a wiped install back to the full suite", async () => {
   assert.deepEqual(sentinelsPresent(fx.asarPath, targetsOf(fx.asarPath)), {
     modelhub: true,
     zcodeplus: true,
+    sessionrewind: true,
   });
 
   const fast = await runEnsure({
@@ -77,5 +78,6 @@ test("ensure repairs a single-feature install to that same feature", async () =>
   assert.deepEqual(sentinelsPresent(fx.asarPath, targetsOf(fx.asarPath)), {
     modelhub: false,
     zcodeplus: true,
+    sessionrewind: false,
   });
 });

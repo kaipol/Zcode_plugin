@@ -560,7 +560,10 @@ Icons adapted from Lucide v1.8.0 (Sparkles, LoaderCircle, Undo2, X), ISC License
     if (!undo) return;
     const state = undoAvailability();
     if (state.restored) lastState = null;
-    undo.hidden = !state.input;
+    // 只在确实能撤销时显示。lastState 是页面级状态：切到其他对话后草稿必然
+    // 不等于增强后快照，若照旧显示会得到一个"内容已修改"的禁用箭头，且会出
+    // 现在每一个对话里。切回原对话（草稿未动）时快照仍匹配，箭头可再次点击。
+    undo.hidden = !state.input || !!state.reason;
     undo.disabled = !!state.reason;
     undo.title = state.reason || "撤销本轮增强";
     undo.setAttribute("aria-label", undo.title);

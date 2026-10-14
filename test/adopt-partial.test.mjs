@@ -43,17 +43,19 @@ test("suite adopts a manifest-less patched asar and completes the install", asyn
   assert.deepEqual(sentinelsPresent(fx.asarPath, discoverTargets(fx.asarPath)), {
     modelhub: true,
     zcodeplus: false,
+    sessionrewind: false,
   });
 
   const res = await install({ resourcesOverride: fx.resourcesDir, _isRunning: notRunning });
   assert.equal(res.baselineSource, "adopted");
-  assert.deepEqual(res.features, ["modelhub", "zcodeplus"]);
+  assert.deepEqual(res.features, ["modelhub", "zcodeplus", "sessionrewind"]);
   assert.equal(loadManifest().baseline.clean, false, "adopted baseline is not a clean official build");
 
   const targets = targetsOf(fx.asarPath);
   const mainTxt = entryText(fx.asarPath, targets.main);
   assert.ok(mainTxt.includes("modelhub:read-config"), "adopted modelhub payload must survive");
   assert.ok(mainTxt.includes("zcodeplus:request"), "zcodeplus payload added");
+  assert.ok(mainTxt.includes("sessionrewind:request"), "sessionrewind payload added");
   assert.equal(
     mainTxt.split('register("modelhub:read-config"').length - 1,
     1,
@@ -61,6 +63,7 @@ test("suite adopts a manifest-less patched asar and completes the install", asyn
   );
   assert.ok(entryText(fx.asarPath, targets.rendererHtml).includes("zcode-plus.js"));
   assert.ok(entryText(fx.asarPath, targets.rendererHtml).includes("zcode-model-hub.js"));
+  assert.ok(entryText(fx.asarPath, targets.rendererHtml).includes("zcode-session-rewind.js"));
   assert.equal(backupCount(), 1);
 });
 

@@ -47,9 +47,9 @@ const HELP = `zcode-suite v${VERSION} — ZCode 桌面版统一插件（model-hu
 用法: zcode-suite <命令> [选项]
 
 命令:
-  install     一键注入两个特性（一次备份、一次重打包）；默认注册自动修复触发器
+  install     一键注入全部特性（一次备份、一次重打包）；默认注册自动修复触发器
               --only ${FEATURE_IDS}   只安装其中一个特性（保留已注入的另一个）
-  restore     还原基线 app.asar（默认为官方原版，两个特性一并移除）
+  restore     还原基线 app.asar（默认为官方原版，全部特性一并移除）
   remove      卸载单个特性并保留另一个: remove --only <feature>
   status      三层状态一览（CLI 层 / 注入层 / 触发器）
   doctor      深度只读体检，失败时生成兼容性报告
@@ -72,8 +72,8 @@ const HELP = `zcode-suite v${VERSION} — ZCode 桌面版统一插件（model-hu
   --json              status/sync 输出 JSON
 
 示例:
-  zcode-suite install                 # 一键安装两个特性
-  zcode-suite install --only zcodeplus
+  zcode-suite install                 # 一键安装全部特性
+  zcode-suite install --only sessionrewind
   zcode-suite remove --only modelhub
   zcode-suite sync --list
   zcode-suite status
@@ -115,7 +115,7 @@ async function cmdRestore(opts) {
 }
 
 async function cmdRemove(opts) {
-  if (!opts.only) throw new Error("remove 需要 --only modelhub|zcodeplus");
+  if (!opts.only) throw new Error(`remove 需要 --only <${FEATURE_IDS}>`);
   const { removeFeature } = await import("../src/patch/apply.mjs");
   const res = await removeFeature({ only: opts.only, resourcesOverride: opts.resources, forceClose: opts.forceClose });
   console.log(`[√] ${res.note}`);

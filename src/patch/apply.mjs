@@ -13,6 +13,7 @@ import {
   FEATURES,
   FEATURE_ORDER,
   ZCODEPLUS_RENDERER_VERSION,
+  SESSIONREWIND_RENDERER_VERSION,
   canonicalFeatures,
 } from "../core/features.mjs";
 import {
@@ -61,8 +62,30 @@ function insertBeforeLastBody(html, tag) {
 
 function rendererPayloadFor(id) {
   const f = FEATURES[id];
+  if (id === "zcodeplus") return adaptInjectSource(payloadText("zcodeplus/inject.js"), ZCODEPLUS_RENDERER_VERSION);
+  if (id === "sessionrewind") {
+    // Stamp the runtime version the same way zcode+ does, so the UI can show it
+    // and a re-injection can replace an older runtime instance.
+    return `globalThis.__zcodeSessionRewindVersion = ${JSON.stringify(SESSIONREWIND_RENDERER_VERSION)};\n` +
+      payloadText(f.rendererPayload);
+  }
   if (f.rendererPayload) return payloadText(f.rendererPayload);
-  return adaptInjectSource(payloadText("zcodeplus/inject.js"), ZCODEPLUS_RENDERER_VERSION);
+  return null;
+}
+
+// Fingerprint of the payload SOURCES for a feature set. Stored in the manifest
+// so a change to a payload file (e.g. a bug fix to an injected handler) forces a
+// repack instead of being masked by the archive-hash no-op — the live asar's
+// hash only reflects what was installed, not what the sources currently say.
+function payloadFingerprint(ids) {
+  const parts = [];
+  for (const id of canonicalFeatures(ids)) {
+    const f = FEATURES[id];
+    parts.push(id, payloadText(f.mainPayload), payloadText(f.preloadPayload));
+    const rp = rendererPayloadFor(id);
+    if (rp != null) parts.push(rp);
+  }
+  return sha256Buf(Buffer.from(parts.join("\u0000"), "utf8"));
 }
 
 // Build the patch map against the baseline archive. Features whose sentinel
@@ -149,6 +172,7 @@ function repackAndRecord({ disc, targets, wanted, now }) {
     ),
     patchedHash,
     patchedStat: { size: st.size, mtimeMs: st.mtimeMs },
+    payloadFingerprint: payloadFingerprint(featuresAfter),
     targets,
     entryHashes: expectedHashes,
     installedAt: now,
@@ -197,14 +221,23 @@ export async function install({
     ? canonicalFeatures([...FEATURE_ORDER.filter((f) => present[f]), only])
     : [...FEATURE_ORDER];
 
-  const m = loadManifest();
-  // Fast no-op: live bytes are exactly the recorded patched state and already
-  // cover everything wanted — a repeated one-click install costs one hash,
-  // not a repack.
+const m = loadManifest();
+  // Fast no-op: live bytes are exactly the recorded patched state, the recorded
+  // payload sources still hash the same, and the wanted set is already covered —
+  // a repeated one-click install costs one hash, not a repack. The fingerprint
+  // check is what makes a payload-source bug fix actually re-apply: the live
+  // archive hash alone would otherwise report a false "已是最新".
   if (m && m.patchedHash) {
     try {
-      if (sha256File(asarPath) === m.patchedHash && wanted.every((f) => present[f])) {
-        return { ok: true, noop: true, features: canonicalFeatures(Object.keys(present).filter((f) => present[f])), note: "已是目标安装状态，无需更改。" };
+      const liveCoversWanted = wanted.every((f) => present[f]);
+      const fp = payloadFingerprint(wanted);
+      // A manifest written before this field existed has no fingerprint; treat
+      // that as "unknown" so the next install performs exactly ONE repack and
+      // records it — after that the fast path resumes. Skipping it would let a
+      // payload-source change stay masked indefinitely on pre-fingerprint installs.
+      const fpMatches = !!m.payloadFingerprint && m.payloadFingerprint === fp;
+      if (liveCoversWanted && fpMatches && sha256File(asarPath) === m.patchedHash) {
+        return { ok: true, noop: true, features: canonicalFeatures(Object.keys(present).filter((f) => present[f])), note: "已是目标安装状态,无需更改。" };
       }
     } catch {}
   }
@@ -260,7 +293,7 @@ export async function restore({
   return {
     ok: true,
     note: baselineClean
-      ? "已还原官方原版 app.asar（两个特性一并移除）。重启 ZCode 生效。"
+      ? "已还原官方原版 app.asar（全部特性一并移除）。重启 ZCode 生效。"
       : "已还原到基线（该基线迁移自旧插件的部分注入态，其中的旧注入保留）。重启 ZCode 生效。",
   };
 }

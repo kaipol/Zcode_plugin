@@ -1,16 +1,17 @@
 # zcode-suite — ZCode 桌面版统一插件
 
-**model-hub（模型拉取）+ zcode+（提示词增强）整合为一个插件：一键安装、一次备份、一个自愈触发器。**
+**model-hub(模型拉取)+ zcode+(提示词增强)+ 会话回退/分支,整合为一个插件:一键安装、一次备份、一个自愈触发器。**
 
-把 `zcode-model-hub`（为 ZCode 桌面版拉取自定义供应商模型列表）与
-`zcode+ 提示词增强`（输入框旁 ✨ 一键改写提示词）整合成单个脚本插件。
-两套功能共享同一套手术式 asar 引擎、同一条官方备份链、同一个更新自愈
-触发器；注入互不干扰的 `modelhub:*` / `zcodeplus:*` 命名空间。
+把 `zcode-model-hub`(为 ZCode 桌面版拉取自定义供应商模型列表)、
+`zcode+ 提示词增强`(输入框旁 ✨ 一键改写提示词)与
+`会话回退 / 分支`(输入框工具条历史按钮:对任意历史轮次回退、或用新模型从检查点分叉)整合成单个脚本插件。
+三套功能共享同一套手术式 asar 引擎、同一条官方备份链、同一个更新自愈
+触发器;注入互不干扰的 `modelhub:*` / `zcodeplus:*` / `sessionrewind:*` 命名空间。
 
 ```
-一键安装 = 注入「⚡️ 拉取模型」+ ✨ 提示词增强（同一份 app.asar，一次原子替换）
-         + 部署用户空间技能（更新免疫的 CLI 层）
-         + 注册自动修复触发器（ZCode 更新后自动重装）
+一键安装 = 注入「⚡️ 拉取模型」+ ✨ 提示词增强 + 🕘 会话回退(同一份 app.asar,一次原子替换)
+         + 部署用户空间技能(更新免疫的 CLI 层)
+         + 注册自动修复触发器(ZCode 更新后自动重装)
 ```
 
 ## 目录结构
@@ -23,25 +24,27 @@ zcode-suite/
 │   └── zcode-suite.mjs           # 统一 CLI：install/restore/remove/status/
 │                                 #   doctor/ensure/sync/watch/unwatch
 ├── src/
-│   ├── core/                     # ★ 两特性共享的底层（去重核心）
+│   ├── core/                     # ★ 三特性共享的底层（去重核心）
 │   │   ├── platform.mjs          #   ZCode 发现/进程检测/路径（唯一来源）
 │   │   ├── surgical-asar.mjs     #   手术式 asar 读写（数据区逐字节保留）
 │   │   ├── verify.mjs            #   哈希/原子写/重包校验
 │   │   ├── manifest.mjs          #   统一 manifest + 单一备份链 + 旧版迁移
 │   │   └── features.mjs          #   特性注册表（哨兵/载荷/命名空间清单）
-│   ├── features/                 # ★ 两特性的注入载荷（互不重叠的命名空间）
+│   ├── features/                 # ★ 三特性的注入载荷（互不重叠的命名空间）
 │   │   ├── payloads.mjs          #   载荷解析（源码树 / 内嵌双通道）
 │   │   ├── payloads.embedded.mjs #   内嵌桩（单文件构建预留，保持为空）
 │   │   ├── modelhub/             #   main-handlers.js + preload-bridge.cjs
 │   │   │   └── ui/zcode-model-hub.js
-│   │   └── zcodeplus/            #   main-handlers.js + preload-bridge.cjs
-│   │       ├── inject.js         #     CDP 版注入源（安装时适配为 asar 载荷）
-│   │       └── adapt.mjs         #     锚点适配器（锚点不匹配即硬失败）
+│   │   ├── zcodeplus/            #   main-handlers.js + preload-bridge.cjs
+│   │   │   ├── inject.js         #     CDP 版注入源（安装时适配为 asar 载荷）
+│   │   │   └── adapt.mjs         #     锚点适配器（锚点不匹配即硬失败）
+│   │   └── sessionrewind/        #   会话回退/分支:main-handlers.js + preload-bridge.cjs
+│   │       └── ui/zcode-session-rewind.js  # 历史面板:列轮次 / 回退 / 分叉
 │   ├── patch/
 │   │   ├── discover-targets.mjs  #   asar 内目标发现（按路径形态，歧义即失败）
 │   │   └── apply.mjs             #   统一 install/restore/remove/inspect
 │   ├── repair/
-│   │   ├── ensure.mjs            #   自愈状态机（一次 ensure 恢复两特性）
+│   │   ├── ensure.mjs            #   自愈状态机（一次 ensure 恢复全部特性）
 │   │   └── triggers.mjs          #   macOS LaunchAgent / Win 计划任务 /
 │   │                             #   Linux systemd path（+ 旧触发器清理）
 │   ├── config.mjs                #   provider_config.json 读写与合并（层1）
@@ -82,18 +85,50 @@ node dist/zcode-suite.mjs install
 可直接安装的脚本插件。
 
 安装过程会：一次解析基线并备份官方 app.asar（仅此一份）→ 一次手术式
-重打包写入两特性 → 部署技能/命令 → 注册自愈触发器。**完成后完全退出并
-重启 ZCode**：设置 → 模型供应商页出现「⚡️ 拉取模型」，输入框旁出现 ✨。
+重打包写入全部特性 → 部署技能/命令 → 注册自愈触发器。**完成后完全退出并
+重启 ZCode**:设置 → 模型供应商页出现「⚡️ 拉取模型」,输入框旁出现 ✨,
+输入框工具条出现 🕘(会话回退)。
 
-可选：
+可选:
 
 ```bash
-node bin/zcode-suite.mjs install --only zcodeplus   # 只装一个特性（保留已在位的另一个）
-node bin/zcode-suite.mjs remove --only modelhub     # 卸载单个特性，保留另一个
-node bin/zcode-suite.mjs restore                    # 还原官方原版（两特性一并移除）
-node bin/zcode-suite.mjs sync --list                # 纯 CLI 拉模型（不碰 app.asar）
-node bin/zcode-suite.mjs status / doctor            # 状态与体检
+node bin/zcode-suite.mjs install --only zcodeplus     # 只装一个特性(保留已在位的其他特性)
+node bin/zcode-suite.mjs install --only sessionrewind # 单独补装会话回退
+node bin/zcode-suite.mjs remove --only modelhub       # 卸载单个特性,保留其他
+node bin/zcode-suite.mjs restore                      # 还原官方原版(全部特性一并移除)
+node bin/zcode-suite.mjs sync --list                  # 纯 CLI 拉模型(不碰 app.asar)
+node bin/zcode-suite.mjs status / doctor              # 状态与体检
 ```
+
+## 会话回退 / 分支(🕘)
+
+输入框工具条的历史(时钟)按钮在**当前会话窗口内**弹出确认面板,按会话库中的真实用户轮次
+列出历史(**最新的排在最上面**),可对**任意一轮**执行回退,或从工作区检查点分叉出新会话。
+被之前回退移出分支的轮次收进「已隐藏」子面板(只读),不会混进主列表。
+点「回退到此轮之前」后面板内二次确认,**确认后自动发送**对应斜杠命令。
+
+**为什么可以"回退后换新模型继续"**:ZCode 的模型选择是**按会话**存储的一条
+`session_entry`(`runtime/model_selection`),回退只截断对话时间线,不改动模型选择;
+回退后在下拉框切到任意模型、直接发送新消息即可。
+
+**实现方式(关键)**:ZCode 桌面版的对话时间线与持久化由**独立的 agent 运行时子进程**
+(`resources/glm/zcode.cjs`)持有,它内置两个斜杠命令,走普通输入路径在运行时内执行,
+且不受 UI "仅允许最新一轮可编辑"闸门限制:
+
+| 命令 | 作用 |
+|---|---|
+| `/rewind cascade conversation <messageId>` | 把会话回退到该用户消息**之前**(工作区文件不改动) |
+| `/fork` / `/rewind fork [checkpointId]` | 从工作区检查点分叉出新会话 |
+
+因此本特性**不直接改写 `session.revert`**(运行时在内存中持有会话,外部写库会被覆盖),
+而是:① 以**只读**连接打开 `~/.zcode/cli/db/db.sqlite`,给面板列出可回退轮次;
+② 用主进程的**受信输入**通道把对应斜杠命令写进输入框并触发发送;**所有持久化仍由运行时自己完成**。
+分支可见性按运行时的 `selectActiveConversationBranch` 语义计算
+(`keptMessageIDs` ∪ `branchCutAfterMessageID` 之后的新消息),回退后新发的轮次不会被误标为隐藏。
+
+> 兼容性:主进程只读会话库依赖 Electron 内置的 `node:sqlite`(ZCode 运行时自身即用它)。
+> 若某版本不可用,面板会明确报错,可改用更新的离线脚本
+> `node scripts/session-rewind.mjs list|inspect|rewind|clear`(需完全退出 ZCode)。
 
 ## 整合解决的三类问题
 
@@ -106,12 +141,12 @@ node bin/zcode-suite.mjs status / doctor            # 状态与体检
 | 两份 manifest + 两份 `backups/<hash>/app.asar` 冷备份 | 一条备份链；`ensureBackup` 按哈希去重，**整个安装过程仅备份一次** |
 | 两次 asar 重打包、两次原子替换、两次读回校验 | 同一 patchMap 一次重打包、一次替换、一次校验 |
 | 两个 sentinel 探测/异补丁检测实现 | `features.mjs` 注册表 + `discover-targets` 按特性探测 |
-| 触发器只护 model-hub，zcode+ 更新后要手动重跑 | 一个触发器 `ensure` 同时恢复两特性 |
+| 触发器只护 model-hub，zcode+ 更新后要手动重跑 | 一个触发器 `ensure` 同时恢复全部特性 |
 | `templates/` 缺失导致默认 install 崩溃（存量缺陷） | 模板补齐于 `src/templates/` |
 
 ### 2) 兼容性处理（冲突与命名空间）
 
-两特性载荷本就互不重叠，整合时逐项审计并固定为注册表约束：
+三特性载荷互不重叠，整合时逐项审计并固定为注册表约束：
 
 | 层 | model-hub | zcode+ | 冲突 |
 |---|---|---|---|
@@ -163,10 +198,10 @@ CLI 链路冒烟；产物哈希打印在构建输出末尾。
 
 | 命令 | 作用 |
 |---|---|
-| `install [--only id] [--no-watch] [--no-skill] [--force-close] [--resources dir]` | 一键安装（默认两特性 + 技能 + 触发器） |
+| `install [--only id] [--no-watch] [--no-skill] [--force-close] [--resources dir]` | 一键安装（默认全部特性 + 技能 + 触发器） |
 | `restore [--force]` | 还原基线（通常即官方原版） |
-| `remove --only <modelhub\|zcodeplus>` | 卸载单特性，保留另一个 |
-| `status [--json]` | 三层状态（CLI 层 / 两特性注入态 / 触发器） |
+| `remove --only <modelhub\|zcodeplus\|sessionrewind>` | 卸载单特性,保留其他 |
+| `status [--json]` | 三层状态（CLI 层 / 各特性注入态 / 触发器） |
 | `doctor` | 只读体检，异常时生成 `doctor-report.json` |
 | `ensure [--quiet] [--check-only]` | 一次性自愈（触发器内部调用，快路径一次 stat） |
 | `sync --list / --provider <id> / --all / --dialect` | 用户空间模型同步（更新免疫） |
@@ -192,6 +227,9 @@ CLI 链路冒烟；产物哈希打印在构建输出末尾。
   （doctor 会明确报告），CLI/技能层不受影响。
 - `install --only` 单特性安装后，`ensure` 只恢复该特性（以 manifest 记录
   为准）；未装过的特性不会被自动补装。
+- 会话回退依赖 ZCode 运行时内置的 `/rewind cascade conversation` 与 `/fork`
+  斜杠命令;若上游移除或改名,面板仍可列出历史,但「回退/分叉」会失败(面板显示运行时返回的错误)。
+  受信写入只接受斜杠命令,不注入任意文本。
 
 ## License
 

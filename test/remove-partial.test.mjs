@@ -11,22 +11,28 @@ const { sentinelsPresent } = await import("../src/patch/discover-targets.mjs");
 
 const notRunning = () => false;
 
-test("remove --only keeps the other feature intact", async () => {
+test("remove --only keeps the other features intact", async () => {
   await install({ resourcesOverride: fx.resourcesDir, _isRunning: notRunning });
 
   const res = await removeFeature({ only: "modelhub", resourcesOverride: fx.resourcesDir, _isRunning: notRunning });
   assert.equal(res.ok, true);
   const targets = targetsOf(fx.asarPath);
-  assert.deepEqual(sentinelsPresent(fx.asarPath, targets), { modelhub: false, zcodeplus: true });
+  assert.deepEqual(sentinelsPresent(fx.asarPath, targets), { modelhub: false, zcodeplus: true, sessionrewind: true });
   assert.ok(!entryText(fx.asarPath, targets.rendererHtml).includes("zcode-model-hub.js"));
   assert.equal(entryText(fx.asarPath, targets.rendererScripts.modelhub), null, "modelhub renderer entry must be gone");
   assert.ok(entryText(fx.asarPath, targets.rendererScripts.zcodeplus).includes("__zcodePlusControllerVersion"));
+  assert.ok(entryText(fx.asarPath, targets.rendererScripts.sessionrewind).includes("__ZCODE_SESSION_REWIND_V1_UI__"));
   assert.ok(entryText(fx.asarPath, targets.main).includes("zcodeplus:request"));
   assert.ok(!entryText(fx.asarPath, targets.main).includes("modelhub:read-config"));
 
-  // removing the last remaining feature falls back to a full restore
+  // removing zcodeplus keeps sessionrewind; only the full restore clears all
   const res2 = await removeFeature({ only: "zcodeplus", resourcesOverride: fx.resourcesDir, _isRunning: notRunning });
   assert.equal(res2.ok, true);
-  assert.deepEqual(sentinelsPresent(fx.asarPath, targetsOf(fx.asarPath)), { modelhub: false, zcodeplus: false });
+  assert.deepEqual(sentinelsPresent(fx.asarPath, targetsOf(fx.asarPath)), { modelhub: false, zcodeplus: false, sessionrewind: true });
+
+  // removing the last remaining feature falls back to a full restore
+  const res3 = await removeFeature({ only: "sessionrewind", resourcesOverride: fx.resourcesDir, _isRunning: notRunning });
+  assert.equal(res3.ok, true);
+  assert.deepEqual(sentinelsPresent(fx.asarPath, targetsOf(fx.asarPath)), { modelhub: false, zcodeplus: false, sessionrewind: false });
   assert.equal(sha256File(fx.asarPath), fx.officialHash);
 });
